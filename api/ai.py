@@ -3,6 +3,7 @@
 The model only explains plans and reads messy PDFs. Its output is validated
 before use and never decides exercises, loads or safety rules.
 """
+import http.client
 import json
 import os
 import urllib.error
@@ -37,12 +38,24 @@ def _complete(messages: list[dict], max_tokens: int) -> str:
     req = urllib.request.Request(f"{BASE_URL}/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=90) as r:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return json.load(r)["choices"][0]["message"]["content"] or ""
     except urllib.error.HTTPError as e:
-        raise AIError(f"AI provider returned HTTP {e.code}") from None
-    except (urllib.error.URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError):
-        raise AIError("AI provider unreachable or returned an unexpected response") from None
+        raise AIError(HTTP_HINTS.get(e.code, f"The AI provider returned HTTP {e.code}. Try again shortly.")) from None
+    except TimeoutError:
+        raise AIError(f"The AI didn't answer within {TIMEOUT} seconds. Try again.") from None
+    # OSError covers URLError and a dropped connection (urlopen doesn't wrap errors raised while reading the response).
+    except (OSError, http.client.HTTPException, ValueError, KeyError, IndexError, TypeError):
+        raise AIError("The AI provider is unreachable or sent an unexpected response. Everything else in KRATOS still works.") from None
+
+
+TIMEOUT = 90
+HTTP_HINTS = {
+    401: "The AI provider rejected the API key. Check KRATOS_LLM_API_KEY.",
+    403: "The AI provider rejected the API key. Check KRATOS_LLM_API_KEY.",
+    404: f"The AI provider doesn't offer the model {MODEL}. Check KRATOS_LLM_MODEL.",
+    429: "The AI provider is rate-limiting requests. Wait a minute and try again.",
+}
 
 
 EXPLAIN_SYSTEM = """You are KRATOS, a concise strength coach. Explain why the given training plan fits this person:
@@ -123,4 +136,41 @@ if __name__ == "__main__":  # offline self-check: .venv/bin/python ai.py
             raise SystemExit(f"accepted {bad!r}")
         except AIError:
             pass
+
+    # Provider failures against a local stub: each one must surface as AIError with its own hint, never a 500.
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Stub(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))  # unread input turns the close into a TCP reset
+            mode = self.server.mode
+            if mode == "drop":
+                return  # close without a response
+            if mode == "slow":
+                time.sleep(TIMEOUT * 3)
+            status, body = {"ok": (200, '{"choices":[{"message":{"content":"hi"}}]}'), "empty": (200, '{"choices":[]}'),
+                            "garbage": (200, "<html>gateway</html>")}.get(mode) or (int(mode), "{}")
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+        def log_message(self, *_):
+            pass
+
+    stub = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+    stub.handle_error = lambda *_: None  # the slow handler writes to a socket the client already gave up on
+    threading.Thread(target=stub.serve_forever, daemon=True).start()
+    BASE_URL, TIMEOUT = f"http://127.0.0.1:{stub.server_port}", 0.3
+    for mode, expect in [("429", "rate-limiting"), ("401", "API key"), ("503", "HTTP 503"), ("drop", "unreachable"),
+                         ("garbage", "unexpected"), ("empty", "unexpected"), ("slow", "didn't answer")]:
+        stub.mode = mode
+        try:
+            chat("s", "u")
+            raise SystemExit(f"{mode}: no AIError")
+        except AIError as e:
+            assert expect in str(e), f"{mode}: {e}"
+    stub.mode = "ok"
+    assert chat("s", "u") == "hi"
     print("ai.py ok")

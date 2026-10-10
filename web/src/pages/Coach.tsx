@@ -65,7 +65,7 @@ function Ask() {
               {m.content}
             </li>
           ))}
-          {busy && <li className="text-sm text-ash">Thinking…</li>}
+          {busy && <li className="text-sm text-ash">Thinking… replies can take up to a minute.</li>}
         </ol>
       )}
       {ai && !msgs.length && (

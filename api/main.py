@@ -75,7 +75,8 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=os.getenv("KRATOS_HOSTS"
 # password logs every device out. scrypt makes a leaked cookie slow to brute-force offline.
 SESSION_KEY = hashlib.scrypt(PASSWORD.encode(), salt=b"kratos-session", n=2**14, r=8, p=1)
 COOKIE, SESSION_SECONDS = "kratos_session", 30 * 86400
-PUBLIC = {"/login", "/manifest.webmanifest", "/icon.svg"}  # browsers fetch the manifest without cookies
+# Browsers fetch the manifest without cookies; the host's health probe has none either.
+PUBLIC = {"/login", "/healthz", "/manifest.webmanifest", "/icon.svg"}
 # occam: global throttle (10 failures/min), so an attacker can also lock the login out; go per-IP if that bites.
 FAILS: deque[float] = deque(maxlen=10)
 
@@ -295,6 +296,14 @@ def session_or_404(c, session_id: int):
 
 # ---- routes --------------------------------------------------------------------
 
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    """Public probe for the host: the app is up and the database on the volume is readable. Reveals nothing else."""
+    with db() as c:
+        c.execute("SELECT 1 FROM profile LIMIT 1")
+    return {"ok": True}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "ai": ai.enabled(), "model": ai.MODEL if ai.enabled() else None}
@@ -476,9 +485,16 @@ def log_set(session_id: int, s: SetIn):
     with db() as c:
         if session_or_404(c, session_id)["completed_at"]:
             raise HTTPException(409, "Session already completed")
-        new_id = c.execute("INSERT INTO set_logs (session_id, exercise_id, set_number, load_kg, reps, rir, logged_at) "
-                           "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                           (session_id, s.exercise_id, s.set_number, s.load_kg, s.reps, s.rir, now())).lastrowid
+        # A retry after a lost response (flaky gym wifi) resends the same set number: update that set, don't log it twice.
+        dup = c.execute("SELECT id FROM set_logs WHERE session_id = ? AND exercise_id = ? AND set_number = ?",
+                        (session_id, s.exercise_id, s.set_number)).fetchone()
+        if dup:
+            new_id = dup["id"]
+            c.execute("UPDATE set_logs SET load_kg = ?, reps = ?, rir = ? WHERE id = ?", (s.load_kg, s.reps, s.rir, new_id))
+        else:
+            new_id = c.execute("INSERT INTO set_logs (session_id, exercise_id, set_number, load_kg, reps, rir, logged_at) "
+                               "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                               (session_id, s.exercise_id, s.set_number, s.load_kg, s.reps, s.rir, now())).lastrowid
     return {"id": new_id, **s.model_dump()}
 
 

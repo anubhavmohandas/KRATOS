@@ -33,6 +33,8 @@ The `Dockerfile` builds one image: the API serving the built UI on port 8000. Th
 - `KRATOS_HOSTS=your.domain`
 - `KRATOS_LLM_API_KEY`, if you want the AI features
 
+Point the host's health check at `/healthz`. It needs no login and fails if the database on the volume can't be read.
+
 Backups run inside the API: when the newest snapshot is over a day old, it takes a new one and verifies it restores. The last 14 are kept, on the same disk as the DB, so copy `/data/backups` elsewhere or download `/api/export` to survive losing that disk. To restore a snapshot, run `python backup.py restore /data/backups/<file>` and restart the API.
 
 Camera features need `localhost` or HTTPS, so opening the app from your phone over the LAN needs HTTPS. Install it as an app from the browser's install button (PWA manifest included).
@@ -91,7 +93,7 @@ cd api && .venv/bin/python test_api.py && .venv/bin/python backup.py test
 cd web && npm test && npx tsc
 ```
 
-`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `ai.py` checks that AI-parsed plans drop bad items without rejecting the rest. `test_api.py` starts a real server and checks that every route is gated, that forged and expired cookies are refused, and that login is throttled. `backup.py test` checks the snapshot, prune and restore cycle. `npm test` covers the rep counter, body metrics, scan positioning cues and timer maths.
+`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `ai.py` checks that AI-parsed plans drop bad items without rejecting the rest, and that a 429, bad key, outage, dropped connection, timeout or junk reply from the provider each becomes a clear error. `test_api.py` starts a real server and checks that every route is gated, that forged and expired cookies are refused, and that login is throttled. It then runs the core journey with the AI provider down: plan, a resent set (stored once), undo, resume, finish, progress, a corrupt PDF and delete-all. `backup.py test` checks the snapshot, prune and restore cycle. `npm test` covers the rep counter, body metrics, scan positioning cues, timer maths, and that every exercise has its own 3D animation.
 
 ## Honest limits
 

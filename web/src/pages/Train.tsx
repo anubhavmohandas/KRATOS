@@ -143,6 +143,7 @@ function PlanView({ profile }: { profile: Profile }) {
       {err && <div className="mb-4"><Alert tone="error">{err}</Alert></div>}
       {draft && <div className="mb-4"><Alert>Editing a copy. Saving creates v{p.version + 1}; v{p.version} stays in Versions. Swaps only offer exercises your equipment and limitations allow.</Alert></div>}
       {!draft && p.warnings.map((w) => <div key={w} className="mb-3"><Alert>{w}</Alert></div>)}
+      {busy === 'why' && <p className="mb-5 text-sm text-ash" role="status">Asking the AI — this can take up to a minute.</p>}
       {why && !draft && <Card title="Coach’s notes" className="mb-5"><p className="whitespace-pre-line text-sm leading-relaxed text-bone/90">{why}</p></Card>}
 
       {draft ? (

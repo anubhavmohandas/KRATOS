@@ -51,7 +51,8 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
     setErr('')
     try {
       const s = await api.send<SetLog>(`/sessions/${sessionId}/sets`, 'POST', {
-        exercise_id: item.exercise_id, set_number: mine.length + 1,
+        // max + 1, not length + 1: after undoing a middle set, length + 1 would land on (and overwrite) the last set.
+        exercise_id: item.exercise_id, set_number: Math.max(0, ...mine.map((l) => l.set_number)) + 1,
         load_kg: form.load ? +toKg(+form.load, units).toFixed(3) : 0, reps: +form.reps, rir: timed ? null : +form.rir,
       })
       setLogs((l) => [...l, s])
