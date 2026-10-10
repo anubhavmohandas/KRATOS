@@ -1,0 +1,8 @@
+node_modules/
+web/dist/
+web/public/mediapipe/
+api/.venv/
+.env
+api/kratos.db*
+__pycache__/
+.DS_Store

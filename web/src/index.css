@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+/* Scene: a matte graphite console in a dark gym, one electric-lime LED strip along the rack. */
+@theme {
+  --color-iron-950: #0a0b0a;   /* page */
+  --color-iron-900: #121413;   /* cards */
+  --color-iron-850: #171a18;
+  --color-iron-800: #1f2320;
+  --color-iron-700: #2c312d;   /* borders */
+  --color-iron-600: #3f4540;
+  --color-ash: #9ba39c;        /* secondary text — 7.6:1 on page */
+  --color-bone: #eef2ec;       /* primary text */
+  --color-accent: #c6f432;     /* electric lime — 14:1 on page; dark text on it */
+  --color-accent-hi: #d9ff66;
+  --color-ember: #ff6a45;      /* live / destructive */
+  --color-sage: #5fd3b5;       /* success — teal so it never reads as the accent */
+
+  --font-display: "Oswald", "Arial Narrow", sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html { color-scheme: dark; }
+body { @apply bg-iron-950 text-bone font-sans antialiased; }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+input, select { @apply bg-iron-900 border border-iron-700 rounded-md px-3 py-2 text-bone w-full; }
+input:focus, select:focus { @apply border-accent outline-none; }
+input[type="checkbox"] { @apply w-auto accent-accent; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
