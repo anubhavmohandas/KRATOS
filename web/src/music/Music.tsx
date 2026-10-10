@@ -272,7 +272,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       {children}
       {/* YouTube's terms require a visible player while it plays — docked, never hidden mid-playback. */}
       <div role="region" aria-label="YouTube player"
-        className={`fixed bottom-40 right-4 z-30 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-xl border border-iron-700 bg-black shadow-2xl shadow-black lg:bottom-4 ${isYT ? '' : 'hidden'}`}>
+        className={`fixed bottom-40 right-20 z-30 w-[min(360px,calc(100vw-6rem))] overflow-hidden rounded-xl border border-iron-700 bg-black shadow-2xl shadow-black lg:bottom-6 lg:right-24 ${isYT ? '' : 'hidden'}`}>
         <div className="flex items-center gap-2 bg-iron-900 px-3 py-1.5 text-xs">
           <span className="font-semibold text-ember">YouTube</span>
           <span className="min-w-0 flex-1 truncate text-ash">{current?.name}</span>

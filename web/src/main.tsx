@@ -8,7 +8,7 @@ import { MiniPlayer, MusicProvider } from './music/Music'
 import { TimerChip, TimerProvider } from './timer/Timer'
 import Dashboard from './pages/Dashboard'
 import Train from './pages/Train'
-import Coach from './pages/Coach'
+import Coach, { CoachChat } from './pages/Coach'
 import Body from './pages/Body'
 import Progress from './pages/Progress'
 import Space from './pages/Space'
@@ -17,7 +17,7 @@ import Space from './pages/Space'
 const TABS = [
   ['', 'Dashboard', 'M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z', ['']],
   ['train', 'Train', 'M4 12h3m10 0h3M7 8v8m10-8v8M7 12h10', ['', 'library', 'versions']],
-  ['coach', 'AI Coach', 'M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z', ['']],
+  ['coach', 'Profile', 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0', ['']],
   ['body', 'Body Lab', 'M12 4a2 2 0 1 0 0 .01M8 21l2-8-3-3 5-2 5 2-3 3 2 8', ['']],
   ['progress', 'Progress', 'M4 19l5-6 4 3 7-9', ['']],
   ['space', 'My Space', 'M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', ['', 'music', 'timers', 'pdf', 'settings']],
@@ -78,13 +78,14 @@ function App() {
         </nav>
       </aside>
 
-      <main className="mx-auto max-w-6xl px-4 pb-44 pt-5 sm:px-6 lg:pb-12 lg:pt-10">
+      <main className="mx-auto max-w-6xl px-4 pb-60 pt-5 sm:px-6 lg:pb-28 lg:pt-10">
         <div className="mb-4 flex min-h-8 items-center justify-between gap-3 lg:justify-end">
           <span className="font-display text-lg font-bold tracking-[0.2em] lg:hidden">KRATOS</span>
           <TimerChip />
         </div>
         {page}
       </main>
+      {p && <CoachChat />}
     </div>
   )
 }

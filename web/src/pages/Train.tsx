@@ -185,7 +185,7 @@ function PlanView({ profile }: { profile: Profile }) {
       )}
 
       {!draft && (
-        <div className="sticky bottom-36 mt-6 flex justify-end lg:bottom-6">
+        <div className="sticky bottom-36 mt-6 flex justify-end pr-16 lg:bottom-6 lg:pr-20">
           <Button className="px-8 py-3 text-base shadow-2xl shadow-black" busy={busy === 'start'} onClick={start}>Start {d.name}</Button>
         </div>
       )}
