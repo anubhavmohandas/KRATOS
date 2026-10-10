@@ -73,11 +73,11 @@ To add an exercise, add one entry to `exercises.json`. Reuse an existing `anim`,
 ## Checks
 
 ```sh
-cd api && .venv/bin/python test_engine.py && .venv/bin/python pdf_import.py
+cd api && .venv/bin/python test_engine.py && .venv/bin/python pdf_import.py && .venv/bin/python ai.py
 cd web && npm test && npx tsc
 ```
 
-`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `npm test` covers the rep counter, body metrics and timer maths.
+`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `ai.py` checks that AI-parsed plans drop bad items without rejecting the rest. `npm test` covers the rep counter, body metrics, scan positioning cues and timer maths.
 
 ## Honest limits
 

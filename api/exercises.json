@@ -23,11 +23,11 @@
 
   {"id": "reverse_lunge", "name": "Reverse Lunge", "pattern": "lunge", "muscles": ["quads", "glutes"], "needs": [], "level": 1, "load": null, "avoid": ["knee"], "anim": "lunge", "track": "squat",
    "cues": ["Step back and lower the back knee toward the floor", "Front shin stays near vertical", "Push through the front heel to return"], "mistakes": ["Front knee collapsing inward", "Steps too short"], "aliases": ["lunge", "lunges", "backward lunge"]},
-  {"id": "db_reverse_lunge", "name": "Dumbbell Reverse Lunge", "pattern": "lunge", "muscles": ["quads", "glutes"], "needs": ["dumbbells"], "level": 2, "load": "dumbbells", "avoid": ["knee"], "anim": "lunge", "props": ["db2"], "track": "squat",
+  {"id": "db_reverse_lunge", "name": "Dumbbell Reverse Lunge", "pattern": "lunge", "muscles": ["quads", "glutes"], "needs": ["dumbbells"], "level": 2, "load": "dumbbells", "avoid": ["knee"], "anim": "lunge", "props": ["db2n"], "track": "squat",
    "cues": ["Dumbbells at your sides", "Torso tall, step back with control", "Alternate legs or finish one side first"], "mistakes": ["Leaning far forward", "Banging the knee on the floor"], "aliases": ["db lunge", "dumbbell lunge", "dumbbell lunges"]},
   {"id": "bulgarian_split_squat", "name": "Bulgarian Split Squat", "pattern": "lunge", "muscles": ["quads", "glutes"], "needs": ["bench"], "level": 2, "load": null, "avoid": ["knee"], "anim": "lunge", "track": "squat",
    "cues": ["Back foot laces-down on the bench", "Drop straight down", "Most weight on the front leg"], "mistakes": ["Front foot too close to the bench", "Bouncing off the bottom"], "aliases": ["rear foot elevated split squat", "bss", "split squat"]},
-  {"id": "db_bulgarian_split_squat", "name": "Dumbbell Bulgarian Split Squat", "pattern": "lunge", "muscles": ["quads", "glutes"], "needs": ["dumbbells", "bench"], "level": 3, "load": "dumbbells", "avoid": ["knee"], "anim": "lunge", "props": ["db2"], "track": "squat",
+  {"id": "db_bulgarian_split_squat", "name": "Dumbbell Bulgarian Split Squat", "pattern": "lunge", "muscles": ["quads", "glutes"], "needs": ["dumbbells", "bench"], "level": 3, "load": "dumbbells", "avoid": ["knee"], "anim": "lunge", "props": ["db2n"], "track": "squat",
    "cues": ["Same setup as bodyweight, dumbbells at your sides", "Control the descent for 2 seconds"], "mistakes": ["Letting the dumbbells swing"], "aliases": ["db bulgarian split squat", "db split squat"]},
 
   {"id": "knee_pushup", "name": "Knee Push-up", "pattern": "h_push", "muscles": ["chest", "triceps", "shoulders"], "needs": [], "level": 1, "load": null, "avoid": ["wrist"], "anim": "kneepushup", "track": "pushup",
@@ -52,7 +52,7 @@
   {"id": "bb_overhead_press", "name": "Barbell Overhead Press", "pattern": "v_push", "muscles": ["shoulders", "triceps", "core"], "needs": ["barbell"], "level": 2, "load": "barbell", "avoid": ["shoulder", "lower_back"], "anim": "press_overhead", "props": ["bar"], "track": "press",
    "cues": ["Bar on the front delts, forearms vertical", "Move the head back, then through", "Lock out over the mid-foot"], "mistakes": ["Excessive back arch", "Bar path looping forward"], "aliases": ["overhead press", "ohp", "military press", "standing press"]},
 
-  {"id": "db_row", "name": "Dumbbell Row", "pattern": "h_pull", "muscles": ["lats", "upper back", "biceps"], "needs": ["dumbbells"], "level": 1, "load": "dumbbells", "avoid": [], "anim": "row", "props": ["db2"], "track": "row",
+  {"id": "db_row", "name": "Dumbbell Row", "pattern": "h_pull", "muscles": ["lats", "upper back", "biceps"], "needs": ["dumbbells"], "level": 1, "load": "dumbbells", "avoid": [], "anim": "row", "props": ["db2n"], "track": "row",
    "cues": ["Hinge forward, flat back — support one hand on a bench if you have one", "Pull the elbow toward the hip", "Pause, then lower under control"], "mistakes": ["Jerking the weight with the torso", "Shrugging instead of rowing"], "aliases": ["one arm dumbbell row", "db row", "bent over dumbbell row", "single arm row", "dumbbell rows"]},
   {"id": "band_row", "name": "Band Row", "pattern": "h_pull", "muscles": ["upper back", "lats", "biceps"], "needs": ["bands"], "level": 1, "load": null, "avoid": [], "anim": "row", "track": "row",
    "cues": ["Anchor the band at chest height", "Squeeze the shoulder blades together", "Slow return"], "mistakes": ["Shrugging", "Leaning back to cheat"], "aliases": ["resistance band row", "banded row"]},
@@ -85,7 +85,7 @@
 
   {"id": "db_curl", "name": "Dumbbell Curl", "pattern": "biceps", "muscles": ["biceps"], "needs": ["dumbbells"], "level": 1, "load": "dumbbells", "avoid": ["elbow"], "anim": "curl", "props": ["db2"], "track": "curl",
    "cues": ["Elbows pinned to your sides", "Turn the palms up as you curl", "Lower for 2 seconds"], "mistakes": ["Swinging the torso", "Elbows drifting forward"], "aliases": ["bicep curl", "biceps curl", "db curl", "dumbbell bicep curl"]},
-  {"id": "hammer_curl", "name": "Hammer Curl", "pattern": "biceps", "muscles": ["biceps", "forearms"], "needs": ["dumbbells"], "level": 1, "load": "dumbbells", "avoid": ["elbow"], "anim": "curl", "props": ["db2"], "track": "curl",
+  {"id": "hammer_curl", "name": "Hammer Curl", "pattern": "biceps", "muscles": ["biceps", "forearms"], "needs": ["dumbbells"], "level": 1, "load": "dumbbells", "avoid": ["elbow"], "anim": "curl", "props": ["db2n"], "track": "curl",
    "cues": ["Palms face each other the whole time", "Elbows still", "Squeeze at the top"], "mistakes": ["Swinging", "Rushing the lowering"], "aliases": ["hammer curls", "neutral grip curl"]},
   {"id": "band_curl", "name": "Band Curl", "pattern": "biceps", "muscles": ["biceps"], "needs": ["bands"], "level": 1, "load": null, "avoid": ["elbow"], "anim": "curl", "track": "curl",
    "cues": ["Stand on the band", "Elbows by your sides", "Slow on the way down"], "mistakes": ["Letting the band snap back"], "aliases": ["resistance band curl", "banded curl"]},

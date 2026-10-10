@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, fromKg, toKg, useApi, type Assessment, type Profile } from '../api'
 import PoseCamera, { type Frame } from '../vision/PoseCamera'
-import { frontMetrics, median, shoulderSpan, sideMetrics } from '../vision/metrics'
+import { frontMetrics, median, positionCue, sideMetrics } from '../vision/metrics'
 import { tone } from '../timer/Timer'
 import { Alert, Button, Card, Field, PageHead } from '../ui'
 
@@ -54,6 +54,7 @@ export default function Body({ profile }: { profile: Profile }) {
               <ul className="list-disc space-y-1 pl-5 text-ash">
                 <li>Camera at hip height, 2–3 m away, whole body in frame head to feet.</li>
                 <li>Fitted clothing, arms slightly away from your sides.</li>
+                <li>Voice cues tell you where to move — closer, back, left, right, which way to turn.</li>
                 <li>Frames are processed on this device. Only the numbers are saved — never images.</li>
               </ul>
               <Alert>These are visual estimates, not clinical measurements. KRATOS doesn’t estimate body-fat % from a camera — it isn’t reliable enough to show as a fact. Use a tape for circumferences.</Alert>
@@ -132,11 +133,11 @@ const STEADY_MS = 1500 // in position this long → countdown starts by itself
 const COUNTDOWN_MS = 3000
 
 function Capture({ step, heightCm, onDone, onCancel, onSkip }: { step: 'front' | 'side'; heightCm: number; onDone: (m: Metrics) => void; onCancel: () => void; onSkip?: () => void }) {
-  const state = useRef({ mode: 'aim' as 'aim' | 'countdown' | 'collect', at: 0, since: 0, beeped: 0, buf: [] as Metrics[] })
+  const state = useRef({ mode: 'aim' as 'aim' | 'countdown' | 'collect', at: 0, since: 0, beeped: 0, buf: [] as Metrics[], cue: null as string | null, cueSince: 0, said: '', saidAt: 0 })
   const [auto, setAuto] = useState(true)
   const autoRef = useRef(auto)
   autoRef.current = auto
-  const [view, setView] = useState({ mode: 'aim', quality: 0, secs: 0, got: 0, facing: false, seen: false })
+  const [view, setView] = useState({ mode: 'aim', secs: 0, got: 0, cue: 'Step into frame' as string | null })
   const minQ = step === 'front' ? 0.75 : 0.6
 
   useEffect(() => {
@@ -152,9 +153,17 @@ function Capture({ step, heightCm, onDone, onCancel, onSkip }: { step: 'front' |
     const s = state.current
     const now = performance.now()
     const m: Metrics = lm.length ? (step === 'front' ? frontMetrics(lm, width, height, heightCm) : sideMetrics(lm, width, height)) : { landmark_quality: 0 }
-    // Front needs shoulders spread across the frame; side needs them stacked — so a front pose can't pass as the side view.
-    const facing = lm.length > 0 && (step === 'front' ? shoulderSpan(lm, width, height) > 0.45 : shoulderSpan(lm, width, height) < 0.3)
-    const ok = m.landmark_quality >= minQ && facing
+    // Framing, distance, centring and facing first; low confidence with all of those right is usually light or background.
+    const cue = positionCue(lm, step, width, height) ?? (m.landmark_quality < minQ ? 'More light, plainer background' : null)
+    const ok = !cue
+
+    // Speak a cue once it has held for a moment (no chatter at a threshold), and repeat it only if ignored.
+    if (cue !== s.cue) Object.assign(s, { cue, cueSince: now })
+    if (autoRef.current && cue && s.mode !== 'countdown' && now - s.cueSince > 700 && (cue !== s.said || now - s.saidAt > 6000)
+      && !globalThis.speechSynthesis?.speaking) {
+      say(cue)
+      Object.assign(s, { said: cue, saidAt: now })
+    }
 
     if (s.mode === 'aim') {
       s.since = ok ? s.since || now : 0
@@ -179,17 +188,13 @@ function Capture({ step, heightCm, onDone, onCancel, onSkip }: { step: 'front' |
       onDone(median(s.buf))
       return
     }
-    setView({ mode: s.mode, quality: m.landmark_quality, secs: Math.max(0, Math.ceil((s.at - now) / 1000)), got: s.buf.length, facing, seen: lm.length > 0 })
+    setView({ mode: s.mode, secs: Math.max(0, Math.ceil((s.at - now) / 1000)), got: s.buf.length, cue })
   }
 
-  const ready = view.quality >= minQ && view.facing
-  // Big enough to read from 3 m away.
+  const ready = !view.cue
+  // Big enough to read from 3 m away. While collecting, a cue means frames are being skipped until you're back.
   const big = view.mode === 'countdown' ? String(view.secs)
-    : view.mode === 'collect' ? 'Hold still'
-      : !view.seen ? 'Step into frame'
-        : view.quality < minQ ? 'Step back — head to feet in view'
-          : !view.facing ? (step === 'front' ? 'Face the camera' : 'Turn sideways')
-            : auto ? 'Hold that…' : 'Ready'
+    : view.cue ?? (view.mode === 'collect' ? 'Hold still' : auto ? 'Hold that…' : 'Ready')
 
   return (
     <div className="space-y-3">
@@ -197,7 +202,7 @@ function Capture({ step, heightCm, onDone, onCancel, onSkip }: { step: 'front' |
         <span className="ml-2 text-ash">{step === 'front' ? 'Stand tall, feet hip-width, arms a little out.' : 'Stand naturally — don’t correct your posture.'}</span></p>
       <PoseCamera onFrame={onFrame} onStop={onCancel}>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 bg-gradient-to-t from-black/85 to-transparent px-4 pb-5 pt-12 text-center" aria-live="polite">
-          <span className={`font-display font-bold uppercase leading-none tracking-wide ${view.mode === 'countdown' ? 'text-8xl text-accent' : `text-3xl sm:text-5xl ${ready || view.mode === 'collect' ? 'text-accent' : 'text-bone'}`}`}>{big}</span>
+          <span className={`font-display font-bold uppercase leading-none tracking-wide ${view.mode === 'countdown' ? 'text-8xl text-accent' : `text-3xl sm:text-5xl ${ready ? 'text-accent' : 'text-bone'}`}`}>{big}</span>
           {view.mode === 'collect' && <span className="h-1.5 w-48 overflow-hidden rounded bg-white/20"><span className="block h-full bg-accent" style={{ width: `${(view.got / FRAMES) * 100}%` }} /></span>}
         </div>
       </PoseCamera>

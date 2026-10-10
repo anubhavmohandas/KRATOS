@@ -215,9 +215,13 @@ export function buildProps(names: string[], rig: Rig, anim: Anim, scene: THREE.S
     updates.push(() => obj.position.copy(pos(handL).add(pos(handR)).multiplyScalar(0.5)))
   }
   for (const name of names) {
-    if (name === 'db2') {
-      handL.add(dumbbell())
-      handR.add(dumbbell())
+    if (name === 'db2' || name === 'db2n') {
+      // db2: handle across the body (palms forward/up); db2n: neutral grip, palms facing in — handle runs front-to-back.
+      for (const hand of [handL, handR]) {
+        const d = dumbbell()
+        if (name === 'db2n') d.rotation.y = Math.PI / 2
+        hand.add(d)
+      }
     } else if (name === 'db1') betweenHands(dumbbell())
     else if (name === 'kb') betweenHands(kettlebell())
     else if (name === 'bar') betweenHands(barbell())

@@ -126,6 +126,47 @@ export function shoulderSpan(lm: Lm[], w: number, h: number) {
   return Math.abs(P(11).x - P(12).x) / Math.max(1e-6, dist(mid(P(11), P(12)), mid(P(23), P(24))))
 }
 
+// ---- scan positioning -----------------------------------------------------------
+
+const FACE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+const FEET_L = [27, 29, 31]
+const FEET_R = [28, 30, 32]
+const EDGE = 0.03 // frame kept clear above the head and below the feet
+
+/**
+ * The one instruction that gets the person into a measurable position, or null once they're there.
+ * Directions are the person's own: the preview is mirrored, landmarks are raw image coordinates.
+ */
+export function positionCue(lm: Lm[], view: 'front' | 'side', w: number, h: number): string | null {
+  if (!lm.length) return 'Step into frame'
+  const face = Math.min(...FACE.map((i) => lm[i].y))
+  const shoulderY = (lm[11].y + lm[12].y) / 2
+  const top = face - 0.4 * (shoulderY - face) // occam: crown ≈ 40% of face-to-shoulder above the eyes — only gates framing
+  const bottom = Math.max(...[...FEET_L, ...FEET_R].map((i) => lm[i].y))
+  const span = bottom - top
+  if (top < EDGE || bottom > 1 - EDGE) {
+    if ((top < EDGE && bottom > 1 - EDGE) || span > 1 - 2 * EDGE) return 'Step back'
+    return top < EDGE ? 'Aim the camera higher' : 'Aim the camera lower'
+  }
+  if (Math.max(vis(lm, FEET_L), vis(lm, FEET_R)) < 0.5) return 'Make sure your feet are visible'
+  if (span < 0.6) return 'Come closer'
+  const cx = (lm[11].x + lm[12].x + lm[23].x + lm[24].x) / 4
+  if (cx > 0.62) return 'Step to your right' // stepping to your right moves you left in the raw image
+  if (cx < 0.38) return 'Step to your left'
+
+  const sideOn = shoulderSpan(lm, w, h)
+  if (view === 'side') return sideOn < 0.3 ? null : 'Turn sideways'
+  if (sideOn <= 0.45) {
+    const dz = (lm[11].z ?? 0) - (lm[12].z ?? 0) // smaller z = closer; left shoulder forward means you've turned right
+    return dz < -0.05 ? 'Turn a little to your left' : dz > 0.05 ? 'Turn a little to your right' : 'Face the camera'
+  }
+  const out = Math.sign(lm[23].x - lm[24].x) // +1 when the subject's left is image-right (facing the camera)
+  const gap = Math.min((lm[15].x - lm[23].x) * out, (lm[24].x - lm[16].x) * out) * w
+  if (gap < 0.15 * Math.abs(lm[11].x - lm[12].x) * w) return 'Arms a little away from your sides'
+  if (Math.min(lm[15].y, lm[16].y) < shoulderY) return 'Lower your arms a little'
+  return null
+}
+
 /** Per-key median over captured frames — kills single-frame jitter. */
 export function median<T extends Record<string, number>>(frames: T[]): T {
   const out = {} as Record<string, number>

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { angle, createCounter, frontMetrics, median, PROFILES, shoulderSpan, type Lm } from './metrics.ts'
+import { angle, createCounter, frontMetrics, median, positionCue, PROFILES, shoulderSpan, type Lm } from './metrics.ts'
 
 /** 33 landmarks with the left knee (23-25-27) bent to `deg` and everything visible. */
 function kneeAt(deg: number, visibility = 1): Lm[] {
@@ -65,6 +65,42 @@ test('front metrics on a symmetric figure', () => {
   assert.equal(shoulderSpan(lm, 1000, 1000).toFixed(2), '0.67') // facing: 200px span / 300px torso
   set(11, 0.51, 0.2); set(12, 0.49, 0.2) // turned side-on: shoulders overlap
   assert.ok(shoulderSpan(lm, 1000, 1000) < 0.3)
+})
+
+/** Front-facing standing figure; `size` = its height as a fraction of the frame, `top` = where its crown area starts. */
+function figure({ cx = 0.5, top = 0.05, size = 0.8, arms = 0.14, shoulders = 0.1, z = 0 } = {}): Lm[] {
+  const lm: Lm[] = Array.from({ length: 33 }, () => ({ x: cx, y: top + 0.08 * size, z: 0, visibility: 1 })) // face
+  const pair = (l: number, dx: number, dy: number, dz = 0) => {
+    lm[l] = { x: cx + dx * size, y: top + dy * size, z: dz, visibility: 1 } // subject's left is image-right
+    lm[l + 1] = { x: cx - dx * size, y: top + dy * size, z: -dz, visibility: 1 }
+  }
+  pair(11, shoulders, 0.19, z); pair(13, 0.12, 0.35); pair(15, arms, 0.5); pair(23, 0.06, 0.52)
+  pair(25, 0.06, 0.73); pair(27, 0.06, 0.93); pair(29, 0.06, 0.95); pair(31, 0.07, 0.96)
+  return lm
+}
+const cue = (o: Parameters<typeof figure>[0], view: 'front' | 'side' = 'front') => positionCue(figure(o), view, 1000, 1000)
+
+test('position cues: framing, distance, centring', () => {
+  assert.equal(cue({}), null)
+  assert.equal(positionCue([], 'front', 1000, 1000), 'Step into frame')
+  assert.equal(cue({ size: 0.5 }), 'Come closer')
+  assert.equal(cue({ size: 1.1, top: 0 }), 'Step back')
+  assert.equal(cue({ top: 0.25 }), 'Aim the camera lower') // feet cut off, head has room
+  assert.equal(cue({ top: -0.05 }), 'Aim the camera higher')
+  assert.equal(cue({ cx: 0.7 }), 'Step to your right') // image-right in raw coords = mirror-left on screen
+  assert.equal(cue({ cx: 0.3 }), 'Step to your left')
+  const hidden = figure({})
+  for (const i of [27, 28, 29, 30, 31, 32]) hidden[i].visibility = 0.2
+  assert.equal(positionCue(hidden, 'front', 1000, 1000), 'Make sure your feet are visible')
+})
+
+test('position cues: facing and arms', () => {
+  assert.equal(cue({ shoulders: 0.04, z: -0.1 }), 'Turn a little to your left') // left shoulder nearer the camera
+  assert.equal(cue({ shoulders: 0.04, z: 0.1 }), 'Turn a little to your right')
+  assert.equal(cue({ shoulders: 0.04 }), 'Face the camera')
+  assert.equal(cue({ arms: 0.07 }), 'Arms a little away from your sides')
+  assert.equal(cue({}, 'side'), 'Turn sideways')
+  assert.equal(cue({ shoulders: 0.03 }, 'side'), null)
 })
 
 test('median per key', () => {
