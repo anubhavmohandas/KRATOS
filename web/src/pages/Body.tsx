@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, fromKg, toKg, useApi, type Assessment, type Profile } from '../api'
-import PoseCamera, { type Frame } from '../vision/PoseCamera'
+import type { Frame } from '../vision/PoseCamera'
 import { frontMetrics, median, positionCue, sideMetrics } from '../vision/metrics'
 import { tone } from '../timer/Timer'
-import { Alert, Button, Card, Field, PageHead } from '../ui'
+import { Alert, Button, Card, Field, PageHead, Spinner } from '../ui'
+
+const PoseCamera = lazy(() => import('../vision/PoseCamera'))  // keeps MediaPipe out of the main bundle
 
 type Step = 'intro' | 'front' | 'side' | 'result'
 type Metrics = Record<string, number>
@@ -38,6 +40,16 @@ export default function Body({ profile }: { profile: Profile }) {
     } catch (e) {
       setMsg({ tone: 'error', text: (e as Error).message })
       return false
+    }
+  }
+
+  async function remove(id: number) {
+    setMsg(null)
+    try {
+      await api.send(`/assessments/${id}`, 'DELETE')
+      history.reload()
+    } catch (e) {
+      setMsg({ tone: 'error', text: (e as Error).message })
     }
   }
 
@@ -110,7 +122,7 @@ export default function Body({ profile }: { profile: Profile }) {
                       {Object.entries(a).filter(([k]) => !['id', 'kind', 'measured_at', 'landmark_quality'].includes(k)).map(([k, v]) =>
                         <span key={k} className="mr-3 inline-block">{k === 'weight_kg' ? 'Weight' : LABEL[k]?.[0] ?? k}: <span className="font-mono text-bone">{k === 'weight_kg' ? `${fromKg(+v, profile.units)} ${profile.units}` : LABEL[k] ? LABEL[k][1](+v) : v}</span></span>)}
                     </td>
-                    <td className="text-right"><button className="text-xs text-ash hover:text-ember" aria-label="Delete entry" onClick={async () => { await api.send(`/assessments/${a.id}`, 'DELETE'); history.reload() }}>Delete</button></td>
+                    <td className="text-right"><button className="text-xs text-ash hover:text-ember" aria-label="Delete entry" onClick={() => remove(a.id)}>Delete</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -200,12 +212,14 @@ function Capture({ step, heightCm, onDone, onCancel, onSkip }: { step: 'front' |
     <div className="space-y-3">
       <p className="text-sm"><span className="font-display font-semibold uppercase tracking-wide text-accent">{step === 'front' ? 'Step 1 · Face the camera' : 'Step 2 · Turn side-on'}</span>
         <span className="ml-2 text-ash">{step === 'front' ? 'Stand tall, feet hip-width, arms a little out.' : 'Stand naturally — don’t correct your posture.'}</span></p>
-      <PoseCamera onFrame={onFrame} onStop={onCancel}>
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 bg-gradient-to-t from-black/85 to-transparent px-4 pb-5 pt-12 text-center" aria-live="polite">
-          <span className={`font-display font-bold uppercase leading-none tracking-wide ${view.mode === 'countdown' ? 'text-8xl text-accent' : `text-3xl sm:text-5xl ${ready ? 'text-accent' : 'text-bone'}`}`}>{big}</span>
-          {view.mode === 'collect' && <span className="h-1.5 w-48 overflow-hidden rounded bg-white/20"><span className="block h-full bg-accent" style={{ width: `${(view.got / FRAMES) * 100}%` }} /></span>}
-        </div>
-      </PoseCamera>
+      <Suspense fallback={<Spinner />}>
+        <PoseCamera onFrame={onFrame} onStop={onCancel}>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 bg-gradient-to-t from-black/85 to-transparent px-4 pb-5 pt-12 text-center" aria-live="polite">
+            <span className={`font-display font-bold uppercase leading-none tracking-wide ${view.mode === 'countdown' ? 'text-8xl text-accent' : `text-3xl sm:text-5xl ${ready ? 'text-accent' : 'text-bone'}`}`}>{big}</span>
+            {view.mode === 'collect' && <span className="h-1.5 w-48 overflow-hidden rounded bg-white/20"><span className="block h-full bg-accent" style={{ width: `${(view.got / FRAMES) * 100}%` }} /></span>}
+          </div>
+        </PoseCamera>
+      </Suspense>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex flex-1 items-center gap-2 text-sm">
           <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />

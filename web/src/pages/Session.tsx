@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, fmtLoad, fmtTarget, fromKg, toKg, useCatalog, type Plan, type SetLog, type Units } from '../api'
-import Trainer3D from '../trainer/Trainer3D'
-import PoseCamera from '../vision/PoseCamera'
 import { createCounter, PROFILES, type CounterState } from '../vision/metrics'
-import { Alert, Button, Card, Field, Stat } from '../ui'
+import { Alert, Button, Card, Field, Spinner, Stat } from '../ui'
 import { TimerPanel, useTimer } from '../timer/Timer'
+
+// three.js and MediaPipe are most of the bundle: load them when a workout first needs them.
+const Trainer3D = lazy(() => import('../trainer/Trainer3D'))
+const PoseCamera = lazy(() => import('../vision/PoseCamera'))
 
 type Props = { plan: Plan; dayIndex: number; sessionId: number; units: Units; onExit: () => void }
 
@@ -62,13 +64,23 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
   }
 
   async function undo(id: number) {
-    await api.send(`/sessions/${sessionId}/sets/${id}`, 'DELETE')
-    setLogs((l) => l.filter((x) => x.id !== id))
+    setErr('')
+    try {
+      await api.send(`/sessions/${sessionId}/sets/${id}`, 'DELETE')
+      setLogs((l) => l.filter((x) => x.id !== id))
+    } catch (e) {
+      setErr((e as Error).message)
+    }
   }
 
   async function finish() {
     if (!logs.length && !confirm('No sets logged. End this workout anyway?')) return
-    await api.send(`/sessions/${sessionId}/complete`, 'POST')
+    try {
+      await api.send(`/sessions/${sessionId}/complete`, 'POST')
+    } catch (e) {
+      // A dialog, not the inline alert: the top Finish button is far from it on a phone.
+      return alert(`Couldn’t finish the workout: ${(e as Error).message}\n\nYour sets are saved. Try again.`)
+    }
     if (timer.run?.cfg.label.startsWith('Rest')) timer.stop()
     // Prescriptions recalculate from what was just logged — show them as next time's targets.
     const next = await api.get<Plan>('/plans/active').then((p) => p.days[dayIndex] ?? null, () => null)
@@ -126,7 +138,7 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
 
       <div className="grid gap-5 lg:grid-cols-[1.25fr_1fr]">
         <div className="space-y-4">
-          <div className="h-80 sm:h-[26rem]">{ex && <Trainer3D anim={ex.anim} props={ex.props} label={ex.name} />}</div>
+          <div className="h-80 sm:h-[26rem]">{ex && <Suspense fallback={<Spinner />}><Trainer3D anim={ex.anim} props={ex.props} label={ex.name} /></Suspense>}</div>
           {ex && (
             <div className="grid gap-4 sm:grid-cols-2">
               <Card title="Cues">
@@ -197,10 +209,12 @@ function RepCounter({ track, onUse, onStop }: { track: string; onUse: (n: number
   const p = PROFILES[track]
   return (
     <div className="space-y-3">
-      <PoseCamera onStop={onStop} onFrame={({ lm, width, height }) => {
-        counter.current ??= createCounter(p, width / height)
-        setS(counter.current(lm))
-      }} />
+      <Suspense fallback={<Spinner />}>
+        <PoseCamera onStop={onStop} onFrame={({ lm, width, height }) => {
+          counter.current ??= createCounter(p, width / height)
+          setS(counter.current(lm))
+        }} />
+      </Suspense>
       <div className="flex items-center gap-4 rounded-xl border border-iron-700 bg-iron-900 p-4">
         <div className="text-center">
           <div className="font-mono text-5xl font-bold tabular-nums" aria-live="polite">{s?.reps ?? 0}</div>

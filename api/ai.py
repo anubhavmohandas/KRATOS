@@ -34,7 +34,7 @@ def _complete(messages: list[dict], max_tokens: int) -> str:
         # Reasoning models (Nemotron) think by default: it eats max_tokens and leaks into content.
         # NVIDIA-only because OpenAI rejects unknown request fields.
         body["chat_template_kwargs"] = {"enable_thinking": False}
-    req =urllib.request.Request(f"{BASE_URL}/chat/completions", data=json.dumps(body).encode(),
+    req = urllib.request.Request(f"{BASE_URL}/chat/completions", data=json.dumps(body).encode(),
                                  headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=90) as r:

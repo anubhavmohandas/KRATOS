@@ -1,29 +1,39 @@
-"""KRATOS API — single user, local-first.
+"""KRATOS API — single user, behind one password.
 
 Run: uvicorn main:app --env-file ../.env   (binds 127.0.0.1 by default)
 """
+import hashlib
+import hmac
 import json
 import os
 import re
 import sqlite3
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
 import ai
+import backup
 import engine
 import pdf_import
 
-DB_PATH = os.getenv("KRATOS_DB", str(Path(__file__).parent / "kratos.db"))
+DB_PATH = backup.DB
 MAX_UPLOAD = 10 * 1024 * 1024
+
+PASSWORD = os.getenv("KRATOS_PASSWORD", "")
+if len(PASSWORD) < 12:
+    raise SystemExit("Set KRATOS_PASSWORD (12+ characters) in .env. It guards every page and API route.")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS profile (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -53,10 +63,77 @@ def now() -> str:
 
 with db() as c:
     c.executescript(SCHEMA)
+threading.Thread(target=backup.run_daily, daemon=True).start()
 
 app = FastAPI(title="KRATOS", docs_url="/api/docs", openapi_url="/api/openapi.json")
-# Local-only app: reject DNS-rebinding requests that arrive with a foreign Host header.
+# Reject DNS-rebinding requests that arrive with a Host header we don't serve.
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=os.getenv("KRATOS_HOSTS", "localhost,127.0.0.1").split(","))
+
+
+# ---- access: one password gates pages, /api and /api/docs ---------------------------
+# The session cookie is an expiry signed with a key derived from the password, so changing the
+# password logs every device out. scrypt makes a leaked cookie slow to brute-force offline.
+SESSION_KEY = hashlib.scrypt(PASSWORD.encode(), salt=b"kratos-session", n=2**14, r=8, p=1)
+COOKIE, SESSION_SECONDS = "kratos_session", 30 * 86400
+PUBLIC = {"/login", "/manifest.webmanifest", "/icon.svg"}  # browsers fetch the manifest without cookies
+# occam: global throttle (10 failures/min), so an attacker can also lock the login out; go per-IP if that bites.
+FAILS: deque[float] = deque(maxlen=10)
+
+
+def sign(exp: str) -> str:
+    return hmac.new(SESSION_KEY, exp.encode(), "sha256").hexdigest()
+
+
+def logged_in(token: str | None) -> bool:
+    exp, _, sig = (token or "").partition(".")
+    return hmac.compare_digest(sig.encode(), sign(exp).encode()) and int(exp) > time.time()  # signature first: exp is ours
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    if request.url.path in PUBLIC or logged_in(request.cookies.get(COOKIE)):
+        return await call_next(request)
+    if request.url.path.startswith("/api"):
+        return JSONResponse({"detail": "Log in first."}, 401)
+    return RedirectResponse("/login", 303)
+
+
+LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0b0a"><link rel="icon" href="/icon.svg"><link rel="manifest" href="/manifest.webmanifest"><title>Log in · KRATOS</title>
+<style>html{color-scheme:dark}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#0a0b0a;color:#eef2ec;font:16px system-ui,sans-serif}
+form{width:min(20rem,calc(100% - 2rem));display:grid;gap:.75rem}h1{margin:0 0 .5rem;font-size:1.5rem;letter-spacing:.2em}
+input,button{font:inherit;padding:.6rem .75rem;border-radius:.4rem;border:1px solid #2c312d}input{background:#121413;color:inherit}
+button{background:#c6f432;color:#0a0b0a;font-weight:600;border:0;cursor:pointer}:focus-visible{outline:2px solid #c6f432;outline-offset:2px}
+p{margin:0;color:#ff6a45}</style></head><body><form method="post" action="/login"><h1>KRATOS</h1>
+<label for="pw">Password</label><input id="pw" type="password" name="password" autocomplete="current-password" required autofocus>
+<!--error--><button>Log in</button></form></body></html>"""
+
+
+@app.get("/login", include_in_schema=False)
+def login_page():
+    return HTMLResponse(LOGIN_PAGE)
+
+
+@app.post("/login", include_in_schema=False)
+async def login(request: Request, password: str = Form("")):
+    if len(FAILS) == FAILS.maxlen and time.monotonic() - FAILS[0] < 60:
+        return HTMLResponse(LOGIN_PAGE.replace("<!--error-->", "<p role=alert>Too many attempts. Wait a minute.</p>"), 429)
+    if not hmac.compare_digest(password.encode(), PASSWORD.encode()):
+        FAILS.append(time.monotonic())
+        return HTMLResponse(LOGIN_PAGE.replace("<!--error-->", "<p role=alert>Wrong password.</p>"), 401)
+    exp = str(int(time.time()) + SESSION_SECONDS)
+    r = RedirectResponse("/", 303)
+    # Anywhere but localhost the cookie is HTTPS-only (the camera needs HTTPS anyway).
+    r.set_cookie(COOKIE, f"{exp}.{sign(exp)}", max_age=SESSION_SECONDS, httponly=True, samesite="lax",
+                 secure=request.url.hostname not in ("localhost", "127.0.0.1"))
+    return r
+
+
+@app.get("/logout", include_in_schema=False)
+def logout():
+    r = RedirectResponse("/login", 303)
+    r.delete_cookie(COOKIE)
+    return r
 
 
 # ---- models (trust boundary) --------------------------------------------------

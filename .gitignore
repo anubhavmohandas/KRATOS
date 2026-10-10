@@ -6,3 +6,4 @@ api/.venv/
 api/kratos.db*
 __pycache__/
 .DS_Store
+api/backups/

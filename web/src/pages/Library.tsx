@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { LABELS, PATTERNS, usable, useApi, useCatalog, type Equipment, type Profile } from '../api'
-import Trainer3D from '../trainer/Trainer3D'
 import { PROFILES } from '../vision/metrics'
-import { Card, Chip, PageHead } from '../ui'
+import { Card, Chip, PageHead, Spinner } from '../ui'
+
+const Trainer3D = lazy(() => import('../trainer/Trainer3D'))  // keeps three.js out of the main bundle
 
 const LEVELS = ['', 'Beginner', 'Intermediate', 'Advanced']
 
@@ -48,7 +49,7 @@ export default function Library({ profile }: { profile: Profile }) {
 
         {ex && (
           <div className="space-y-4">
-            <div className="h-80 sm:h-[26rem]"><Trainer3D anim={ex.anim} props={ex.props} label={ex.name} /></div>
+            <div className="h-80 sm:h-[26rem]"><Suspense fallback={<Spinner />}><Trainer3D anim={ex.anim} props={ex.props} label={ex.name} /></Suspense></div>
             <Card title={ex.name}>
               <dl className="mb-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
                 <div><dt className="text-xs text-ash">Muscles</dt><dd>{ex.muscles.join(', ')}</dd></div>

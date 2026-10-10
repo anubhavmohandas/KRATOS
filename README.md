@@ -6,13 +6,15 @@ Personal fitness intelligence. Plans are built from the equipment you actually o
 - a music player and timer suite that follow you through the workout
 - PDF workout import
 
-Single user, local-first. Workouts and body data live in `api/kratos.db`; music lives in your browser.
+Single user, behind one password. Workouts and body data live in `api/kratos.db`, with a daily snapshot in `api/backups/`. Music lives in your browser.
 
 ## Run
 
 ```sh
 ./start.sh            # first run installs everything → http://localhost:8000
 ```
+
+Set `KRATOS_PASSWORD` (12+ characters) in `.env` first. The API refuses to start without it. The password guards every page and API route, `/api/docs` included.
 
 Development with hot reload (two terminals):
 
@@ -22,6 +24,16 @@ cd web && npm run dev                                               # UI on :517
 ```
 
 **Configuration lives in `.env` at the project root** (created from `.env.example` on first run, gitignored). AI is optional. Set `KRATOS_LLM_API_KEY` (or `NVIDIA_API_KEY`) to enable "Why this plan?", Ask KRATOS and AI parsing for messy PDFs. The default provider is NVIDIA NIM; any OpenAI-compatible endpoint works via `KRATOS_LLM_BASE_URL` / `KRATOS_LLM_MODEL`.
+
+## Deploy
+
+The `Dockerfile` builds one image: the API serving the built UI on port 8000. The host needs a persistent volume mounted at `/data` (the DB and its backups) and HTTPS in front. Set these as host secrets, never in the image:
+
+- `KRATOS_PASSWORD`
+- `KRATOS_HOSTS=your.domain`
+- `KRATOS_LLM_API_KEY`, if you want the AI features
+
+Backups run inside the API: when the newest snapshot is over a day old, it takes a new one and verifies it restores. The last 14 are kept, on the same disk as the DB, so copy `/data/backups` elsewhere or download `/api/export` to survive losing that disk. To restore a snapshot, run `python backup.py restore /data/backups/<file>` and restart the API.
 
 Camera features need `localhost` or HTTPS, so opening the app from your phone over the LAN needs HTTPS. Install it as an app from the browser's install button (PWA manifest included).
 
@@ -61,6 +73,7 @@ api/
   engine.py           plan generation + load prescription
   exercises.json      curated catalog (equipment, contraindications, cues, animation, rep-counter profile)
   pdf_import.py       PDF text → sets×reps rows → fuzzy catalog match
+  backup.py           daily SQLite snapshots, restore
   ai.py               OpenAI-compatible client (NVIDIA NIM default)
 web/src/
   main.tsx, router.tsx  shell + History-API routing
@@ -74,10 +87,11 @@ To add an exercise, add one entry to `exercises.json`. Reuse an existing `anim`,
 
 ```sh
 cd api && .venv/bin/python test_engine.py && .venv/bin/python pdf_import.py && .venv/bin/python ai.py
+cd api && .venv/bin/python test_api.py && .venv/bin/python backup.py test
 cd web && npm test && npx tsc
 ```
 
-`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `ai.py` checks that AI-parsed plans drop bad items without rejecting the rest. `npm test` covers the rep counter, body metrics, scan positioning cues and timer maths.
+`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `ai.py` checks that AI-parsed plans drop bad items without rejecting the rest. `test_api.py` starts a real server and checks that every route is gated, that forged and expired cookies are refused, and that login is throttled. `backup.py test` checks the snapshot, prune and restore cycle. `npm test` covers the rep counter, body metrics, scan positioning cues and timer maths.
 
 ## Honest limits
 

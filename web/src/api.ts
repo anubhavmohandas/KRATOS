@@ -50,6 +50,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: typeof init.body === 'string' ? { 'Content-Type': 'application/json' } : undefined,
   })
+  if (r.status === 401) location.assign('/login') // session expired: the server gates every route
   if (!r.ok) {
     const e = await r.json().catch(() => ({}))
     const detail = typeof e.detail === 'string' ? e.detail : Array.isArray(e.detail) ? e.detail.map((d: { msg: string }) => d.msg).join('; ') : `Request failed (${r.status})`

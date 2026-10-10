@@ -22,6 +22,7 @@ export default function Space({ sub }: { sub: string }) {
         <div className="space-y-5">
           <DataCard />
           <p className="text-sm text-ash">Install KRATOS as an app: in Chrome or Edge use the install icon in the address bar; on iPhone, Share → Add to Home Screen. Music files live in this browser; workouts and body data live in <code className="font-mono">api/kratos.db</code>.</p>
+          <a href="/logout" className="inline-block text-sm text-ash underline hover:text-bone">Log out of this device</a>
         </div>
       )}
     </>
