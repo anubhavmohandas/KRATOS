@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
-import { api, ApiError, fmtLoad, fmtTarget, fromKg, toKg, useCatalog, type Plan, type SetLog, type Units } from '../api'
+import { api, ApiError, fmtLoad, fmtTarget, fromKg, outbox, sendOrQueue, toKg, useCatalog, type Plan, type SetLog, type Units } from '../api'
 import { createCounter, PROFILES, type CounterState } from '../vision/metrics'
 import { Alert, Button, Card, Field, Spinner, Stat } from '../ui'
 import { TimerPanel, useTimer } from '../timer/Timer'
+import { ReadinessNote } from './Recovery'
+import FormReview from '../vision/FormReview'
 
 // three.js and MediaPipe are most of the bundle: load them when a workout first needs them.
 const Trainer3D = lazy(() => import('../trainer/Trainer3D'))
@@ -21,7 +23,8 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
-  const [done, setDone] = useState<null | { sets: number; volume: number; minutes: number; next: Plan['days'][number] | null }>(null)
+  const [done, setDone] = useState<null | { sets: number; volume: number; minutes: number; next: Plan['days'][number] | null; queued: boolean }>(null)
+  const [online, setOnline] = useState(navigator.onLine)
   const started = useRef(Date.now())
 
   const item = day.items[idx]
@@ -29,11 +32,28 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
   const mine = logs.filter((l) => l.exercise_id === item.exercise_id)
   const timed = item.unit === 'sec'
 
+  // Offline sets sync in the background; reload the real ones when they land.
+  useEffect(() => {
+    const synced = () => api.get<{ sets: SetLog[] }>(`/sessions/${sessionId}`).then((s) => setLogs(s.sets), () => {})
+    const net = () => setOnline(navigator.onLine)
+    addEventListener('kratos:synced', synced)
+    addEventListener('online', net)
+    addEventListener('offline', net)
+    return () => {
+      removeEventListener('kratos:synced', synced)
+      removeEventListener('online', net)
+      removeEventListener('offline', net)
+    }
+  }, [sessionId])
+
   useEffect(() => {
     api.get<{ sets: SetLog[]; started_at: string; completed_at: string | null }>(`/sessions/${sessionId}`)
       .then((s) => {
         if (s.completed_at) return onExit(true) // finished on another device
-        setLogs(s.sets)
+        // Sets still waiting in this browser's outbox show as pending on top of what the server has.
+        const waiting = outbox.list().filter((p) => p.path === `/sessions/${sessionId}/sets` && p.method === 'POST')
+          .map((p, i) => ({ ...(p.body as Omit<SetLog, 'id'>), id: -1 - i, pending: true }))
+        setLogs([...s.sets, ...waiting.filter((w) => !s.sets.some((x) => x.exercise_id === w.exercise_id && x.set_number === w.set_number))])
         started.current = Date.parse(s.started_at)
         setLoaded(true)
       })
@@ -54,12 +74,13 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
     setBusy(true)
     setErr('')
     try {
-      const s = await api.send<SetLog>(`/sessions/${sessionId}/sets`, 'POST', {
+      const body = {
         // max + 1, not length + 1: after undoing a middle set, length + 1 would land on (and overwrite) the last set.
         exercise_id: item.exercise_id, set_number: Math.max(0, ...mine.map((l) => l.set_number)) + 1,
         load_kg: form.load ? +toKg(+form.load, units).toFixed(3) : 0, reps: +form.reps, rir: timed ? null : +form.rir,
-      })
-      setLogs((l) => [...l, s])
+      }
+      const s = await sendOrQueue<SetLog>(`/sessions/${sessionId}/sets`, 'POST', body) // null = no connection, kept for later
+      setLogs((l) => [...l, s ?? { ...body, id: -Date.now(), pending: true }])
       if (item.rest_seconds > 0) timer.start({ kind: 'countdown', seconds: item.rest_seconds, label: `Rest · ${ex?.name ?? ''}` })
     } catch (e) {
       setErr((e as Error).message)
@@ -70,9 +91,14 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
 
   async function undo(id: number) {
     setErr('')
+    const l = logs.find((x) => x.id === id)
     try {
-      await api.send(`/sessions/${sessionId}/sets/${id}`, 'DELETE')
-      setLogs((l) => l.filter((x) => x.id !== id))
+      if (l?.pending) { // never reached the server: just take it out of the outbox
+        outbox.drop((p) => !(p.path === `/sessions/${sessionId}/sets` && (p.body as SetLog).exercise_id === l.exercise_id && (p.body as SetLog).set_number === l.set_number))
+      } else {
+        await sendOrQueue(`/sessions/${sessionId}/sets/${id}`, 'DELETE')
+      }
+      setLogs((all) => all.filter((x) => x.id !== id))
     } catch (e) {
       setErr((e as Error).message)
     }
@@ -80,8 +106,9 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
 
   async function finish() {
     if (!logs.length && !confirm('No sets logged. End this workout anyway?')) return
+    let queued = false
     try {
-      await api.send(`/sessions/${sessionId}/complete`, 'POST')
+      queued = (await sendOrQueue(`/sessions/${sessionId}/complete`, 'POST')) === null
     } catch (e) {
       // A dialog, not the inline alert: the top Finish button is far from it on a phone.
       return alert(`Couldn’t finish the workout: ${(e as Error).message}\n\nYour sets are saved. Try again.`)
@@ -89,13 +116,14 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
     if (timer.run?.cfg.label.startsWith('Rest')) timer.stop()
     // Prescriptions recalculate from what was just logged — show them as next time's targets.
     const next = await api.get<Plan>('/plans/active').then((p) => p.days[dayIndex] ?? null, () => null)
-    setDone({ sets: logs.length, volume: logs.reduce((v, l) => v + l.load_kg * l.reps, 0), minutes: Math.round((Date.now() - started.current) / 60000), next })
+    setDone({ sets: logs.length, volume: logs.reduce((v, l) => v + l.load_kg * l.reps, 0), minutes: Math.round((Date.now() - started.current) / 60000), next, queued })
   }
 
   if (done) {
     return (
       <Card title="Workout complete" className="mx-auto max-w-xl">
         <h1 className="mb-5 font-display text-3xl font-bold uppercase">{day.name} — done</h1>
+        {done.queued && <div className="mb-5"><Alert>Saved on this device. It syncs to KRATOS as soon as you’re back online.</Alert></div>}
         <div className="mb-6 grid grid-cols-3 gap-4">
           <Stat label="Sets" value={done.sets} />
           <Stat label="Volume" value={Math.round(fromKg(done.volume, units))} unit={units} />
@@ -128,6 +156,9 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
         </div>
         <Button variant="ghost" onClick={finish}>Finish workout</Button>
       </div>
+
+      <ReadinessNote />
+      {!online && <div className="mb-4"><Alert>You’re offline. Sets are kept on this device and sync when the connection is back.</Alert></div>}
 
       <nav className="mb-5 flex gap-1.5 overflow-x-auto pb-1" aria-label="Exercises">
         {day.items.map((it, i) => {
@@ -183,7 +214,8 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
               <ul className="mt-4 divide-y divide-iron-800 border-t border-iron-800 text-sm">
                 {mine.map((l) => (
                   <li key={l.id} className="flex items-center justify-between py-2 font-mono">
-                    <span>#{l.set_number} · {l.load_kg ? fmtLoad(l.load_kg, units) : 'BW'} × {l.reps}{timed ? 's' : ''}{l.rir != null && <span className="text-ash"> @{l.rir}</span>}</span>
+                    <span>#{l.set_number} · {l.load_kg ? fmtLoad(l.load_kg, units) : 'BW'} × {l.reps}{timed ? 's' : ''}{l.rir != null && <span className="text-ash"> @{l.rir}</span>}
+                      {l.pending && <span className="ml-2 font-sans text-[11px] text-accent">offline · will sync</span>}</span>
                     <button className="font-sans text-xs text-ash hover:text-ember" onClick={() => undo(l.id)} aria-label={`Delete set ${l.set_number}`}>Undo</button>
                   </li>
                 ))}
@@ -234,6 +266,7 @@ function RepCounter({ track, onUse, onStop }: { track: string; onUse: (n: number
           <Button variant="ghost" onClick={() => { counter.current = null; setS(null) }}>Reset</Button>
         </div>
       </div>
+      <FormReview s={s} />
       <p className="text-[11px] text-ash/80">Film side-on, whole body in frame. A quick live check comes first — move your arm on each cue — so a replayed video can’t count; it repeats if you leave the frame. Only full, controlled reps count, and the count fills the reps box only when you press Use.</p>
     </div>
   )

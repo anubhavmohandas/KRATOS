@@ -79,7 +79,7 @@ export default function Import() {
           <Button busy={busy && !days} disabled={!file}>Extract</Button>
         </form>
         {busy && !days && useAi && <p className="mt-3 text-sm text-ash" role="status">Reading with AI — this can take up to a minute.</p>}
-        <p className="mt-3 text-xs text-ash">The PDF is read in memory and discarded. Nothing becomes a plan until you review it below, and it’s saved as a new version — your current plan stays in Train → Versions.{useAi && ' With AI on, the extracted text is sent to your configured LLM provider.'}</p>
+        <p className="mt-3 text-xs text-ash">Scanned PDFs (photos of paper) are read with OCR, which is slower and misreads numbers more often. The PDF is read in memory and discarded. Nothing becomes a plan until you review it below, and it’s saved as a new version — your current plan stays in Train → Versions.{useAi && ' With AI on, the extracted text is sent to your configured LLM provider.'}</p>
       </Card>
 
       {err && <div className="mb-4"><Alert tone="error">{err}</Alert></div>}

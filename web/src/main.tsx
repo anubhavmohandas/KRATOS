@@ -1,7 +1,7 @@
 import { StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import { useApi, type Profile } from './api'
+import { flushOutbox, useApi, type Profile } from './api'
 import { Link, navigate, usePath } from './router'
 import { Alert, LinkButton, PageHead, Spinner } from './ui'
 import { MiniPlayer, MusicProvider } from './music/Music'
@@ -16,9 +16,9 @@ import Space from './pages/Space'
 // [path segment, label, icon, allowed sub-paths]
 const TABS = [
   ['', 'Dashboard', 'M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z', ['']],
-  ['train', 'Train', 'M4 12h3m10 0h3M7 8v8m10-8v8M7 12h10', ['', 'library', 'versions']],
+  ['train', 'Train', 'M4 12h3m10 0h3M7 8v8m10-8v8M7 12h10', ['', 'library', 'versions', 'calendar']],
   ['coach', 'Profile', 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0', ['']],
-  ['body', 'Body Lab', 'M12 4a2 2 0 1 0 0 .01M8 21l2-8-3-3 5-2 5 2-3 3 2 8', ['']],
+  ['body', 'Body Lab', 'M12 4a2 2 0 1 0 0 .01M8 21l2-8-3-3 5-2 5 2-3 3 2 8', ['', 'recovery', 'nutrition']],
   ['progress', 'Progress', 'M4 19l5-6 4 3 7-9', ['']],
   ['space', 'My Space', 'M9 18V6l11-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', ['', 'music', 'timers', 'pdf', 'settings']],
 ] as const
@@ -55,7 +55,7 @@ function App() {
   else if (!tab) page = <><PageHead kicker="404" title="No such page" /><LinkButton href="/">Back to dashboard</LinkButton></>
   // My Space works without a profile, so a wiped install can still reach Settings → Backups to undo it.
   else if ((!p && id !== 'space') || id === 'coach') page = <Coach profile={p} onSaved={onSaved} />
-  else page = id === 'space' ? <Space sub={sub} /> : { '': <Dashboard profile={p!} />, train: <Train profile={p!} sub={sub} />, body: <Body profile={p!} />, progress: <Progress profile={p!} /> }[id as string]
+  else page = id === 'space' ? <Space sub={sub} /> : { '': <Dashboard profile={p!} />, train: <Train profile={p!} sub={sub} onProfile={profile.setData} />, body: <Body profile={p!} sub={sub} onProfile={profile.setData} />, progress: <Progress profile={p!} /> }[id as string]
 
   return (
     <div className="min-h-dvh lg:pl-60">
@@ -90,6 +90,11 @@ function App() {
     </div>
   )
 }
+
+// Sets logged without a connection replay once it's back; the service worker keeps the app itself opening offline.
+addEventListener('online', () => flushOutbox())
+flushOutbox()
+if (import.meta.env.PROD && 'serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

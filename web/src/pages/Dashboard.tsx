@@ -3,6 +3,7 @@ import { estMinutes, fmtLoad, fmtTarget, fromKg, local, NEXT_DAY_KEY, useActiveS
 import { Cover, useMusic } from '../music/Music'
 import { TimerPanel, useTimer } from '../timer/Timer'
 import { Button, Card, LinkButton } from '../ui'
+import { ReadinessCard } from './Recovery'
 import type { ProgressData } from './Progress'
 import { Link } from '../router'
 
@@ -71,6 +72,7 @@ export default function Dashboard({ profile }: { profile: Profile }) {
         </Card>
 
         <div className="space-y-5">
+          <ReadinessCard />
           {timer.run ? <TimerPanel /> : (
             <Card title="Timers">
               <div className="flex flex-wrap gap-2">

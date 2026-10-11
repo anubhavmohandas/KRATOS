@@ -57,3 +57,13 @@ rx = engine.prescribe(bw, [], [{"session_id": 2, "load_kg": 0, "reps": 12, "rir"
 assert rx["load_kg"] is None and "harder variation" in rx["note"]
 
 print(f"engine ok — {checked} plan items checked")
+
+r = engine.readiness
+assert r(8, 1, 5, 1)["score"] == 100 and r(4, 5, 1, 5)["score"] == 0, "the ends of the scale"
+assert r(10, 1, 5, 1) == r(8, 1, 5, 1), "sleep past 8 h adds nothing"
+for args, k in itertools.product([(7, 2, 4, 2), (5, 4, 2, 4)], range(4)):
+    worse = list(args)
+    worse[k] = max(4, worse[k] - 1) if k == 0 else (min(5, worse[k] + 1) if k != 2 else max(1, worse[k] - 1))
+    assert r(*worse)["score"] <= r(*args)["score"], f"feeling worse never raises readiness: {args} → {worse}"
+assert r(8, 1, 5, 1)["advice"].startswith("Ready") and r(4, 5, 1, 5)["advice"].startswith("Go light")
+print("readiness ok")

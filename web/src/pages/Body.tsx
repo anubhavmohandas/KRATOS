@@ -1,9 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
-import { api, fromKg, toKg, useApi, type Assessment, type Profile } from '../api'
+import { api, fromKg, toKg, useApi, type Assessment, type Profile, type Units } from '../api'
 import type { Frame } from '../vision/PoseCamera'
 import { frontMetrics, median, positionCue, sideMetrics } from '../vision/metrics'
 import { tone } from '../timer/Timer'
 import { Alert, Button, Card, Field, PageHead, Spinner } from '../ui'
+import { Link } from '../router'
+import Recovery from './Recovery'
+import Nutrition from './Nutrition'
 
 const PoseCamera = lazy(() => import('../vision/PoseCamera'))  // keeps MediaPipe out of the main bundle
 
@@ -24,7 +27,25 @@ const LABEL: Record<string, [string, (v: number) => string]> = {
 const MANUAL = ['waist_cm', 'chest_cm', 'hips_cm', 'arm_cm', 'thigh_cm'] as const
 for (const k of MANUAL) LABEL[k] = [k[0].toUpperCase() + k.slice(1, -3), (v) => `${v} cm`]
 
-export default function Body({ profile }: { profile: Profile }) {
+const TABS = [['', 'Scan & measure', 'Assess & measure'], ['recovery', 'Recovery', 'Recovery'], ['nutrition', 'Nutrition', 'Nutrition']] as const
+
+export default function Body({ profile, sub, onProfile }: { profile: Profile; sub: string; onProfile: (p: Profile) => void }) {
+  const tab = TABS.find(([k]) => k === sub) ?? TABS[0]
+  return (
+    <>
+      <PageHead kicker="Body Lab" title={tab[2]} />
+      <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-iron-800" aria-label="Body Lab sections">
+        {TABS.map(([k, label]) => (
+          <Link key={k} href={`/body${k && '/' + k}`} aria-current={tab[0] === k ? 'page' : undefined}
+            className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-sm ${tab[0] === k ? 'border-accent text-bone' : 'border-transparent text-ash hover:text-bone'}`}>{label}</Link>
+        ))}
+      </nav>
+      {tab[0] === 'recovery' ? <Recovery /> : tab[0] === 'nutrition' ? <Nutrition profile={profile} onProfile={onProfile} /> : <Lab profile={profile} />}
+    </>
+  )
+}
+
+function Lab({ profile }: { profile: Profile }) {
   const history = useApi<Assessment[]>('/assessments')
   const [step, setStep] = useState<Step>('intro')
   const [result, setResult] = useState<Metrics>({})
@@ -57,7 +78,6 @@ export default function Body({ profile }: { profile: Profile }) {
 
   return (
     <>
-      <PageHead kicker="Body Lab" title="Assess & measure" />
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         <Card title="Camera scan" className={step === 'front' || step === 'side' ? 'lg:col-span-2' : ''}>
           {step === 'intro' && (
@@ -106,6 +126,8 @@ export default function Body({ profile }: { profile: Profile }) {
         </div>
       </div>
 
+      <Changes list={history.data ?? []} units={profile.units} />
+
       <Card title="History" className="mt-5">
         {!history.data?.length ? <p className="text-sm text-ash">No assessments yet.</p> : (
           <div className="overflow-x-auto">
@@ -131,6 +153,39 @@ export default function Body({ profile }: { profile: Profile }) {
         )}
       </Card>
     </>
+  )
+}
+
+/** The latest camera scan and the latest tape-and-scale entry, each against the one before it. */
+function Changes({ list, units }: { list: Assessment[]; units: Units }) {
+  const pairs = (['camera', 'manual'] as const).map((kind) => list.filter((a) => a.kind === kind).slice(0, 2)).filter((p) => p.length === 2)
+  if (!pairs.length) return null
+  const date = (a: Assessment) => new Date(a.measured_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  const signed = (v: number, digits: number) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(digits)}`
+  const delta = (k: string, d: number) =>
+    k === 'weight_kg' ? `${signed(fromKg(d, units), 1)} ${units}`
+      : k.endsWith('_cm') || k.endsWith('_cm_est') ? `${signed(d, 1)} cm`
+        : k.endsWith('_deg') ? `${signed(d, 1)}°`
+          : k === 'head_forward_ratio' ? `${signed(d * 100, 0)} pts` : signed(d, 2)
+  return (
+    <Card title="Since last time" className="mt-5">
+      <div className="grid gap-6 sm:grid-cols-2">
+        {pairs.map(([now, before]) => (
+          <div key={now.kind}>
+            <h3 className="mb-2 text-xs text-ash">{now.kind === 'camera' ? 'Camera scan' : 'Tape & scale'} · {date(before)} → {date(now)}</h3>
+            <dl className="divide-y divide-iron-800 text-sm">
+              {Object.keys(now).filter((k) => typeof now[k] === 'number' && typeof before[k] === 'number' && !['id', 'landmark_quality'].includes(k)).map((k) => (
+                <div key={k} className="flex justify-between gap-3 py-1.5">
+                  <dt className="text-ash">{k === 'weight_kg' ? 'Weight' : LABEL[k]?.[0] ?? k}</dt>
+                  <dd className="font-mono">{delta(k, +now[k] - +before[k])}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-[11px] text-ash/80">Camera numbers move a little between scans even when you don’t; trust a trend over several scans more than one change.</p>
+    </Card>
   )
 }
 

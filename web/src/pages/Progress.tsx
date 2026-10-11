@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { fromKg, useApi, type Profile, type Units } from '../api'
+import { fromKg, useApi, type Profile } from '../api'
 import { Alert, Card, PageHead, Spinner, Stat } from '../ui'
 import { Link } from '../router'
 
@@ -8,7 +8,7 @@ export type ProgressData = {
   records: { exercise_id: string; name: string; kind: 'e1rm' | 'reps' | 'sec'; value: number; date: string }[]
   weights: { date: string; kg: number }[]
   lifts: { exercise_id: string; name: string; points: { date: string; e1rm: number }[] }[]
-  sessions: { id: number; started_at: string; completed_at: string }[]
+  sessions: { id: number; started_at: string; completed_at: string; day_index: number; day: string; sets: number }[]
   totals: { sets: number; volume_kg: number }
 }
 
@@ -92,7 +92,7 @@ export default function Progress({ profile }: { profile: Profile }) {
 const Empty = ({ children }: { children: ReactNode }) => <p className="grid h-48 place-items-center px-6 text-center text-sm text-ash">{children}</p>
 
 /** Single-series line: 2px stroke, ≥8px markers, crosshair + tooltip, table view for screen readers. */
-function LineChart({ title, points, unit }: { title: string; points: Pt[]; unit: Units }) {
+export function LineChart({ title, points, unit }: { title: string; points: Pt[]; unit: string }) {
   const [hover, setHover] = useState<number | null>(null)
   const box = useRef<HTMLDivElement>(null)
   const [W, setW] = useState(600) // real pixel width, so axis text stays 11px on phones

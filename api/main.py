@@ -16,13 +16,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
 import ai
@@ -51,8 +52,12 @@ CREATE TABLE IF NOT EXISTS set_logs (id INTEGER PRIMARY KEY, session_id INTEGER 
                                      exercise_id TEXT NOT NULL, set_number INTEGER NOT NULL, load_kg REAL NOT NULL, reps INTEGER NOT NULL,
                                      rir INTEGER, logged_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS set_logs_exercise ON set_logs (exercise_id, id);
+CREATE TABLE IF NOT EXISTS checkins (day TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS meals (id INTEGER PRIMARY KEY, day TEXT NOT NULL, name TEXT NOT NULL, kcal INTEGER, protein_g REAL,
+                                  created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS meals_day ON meals (day);
 """
-TABLES = ["profile", "equipment", "assessments", "plans", "sessions", "set_logs"]
+TABLES = ["profile", "equipment", "assessments", "plans", "sessions", "set_logs", "checkins", "meals"]
 MAX_RESTORE = 50 * 1024 * 1024
 
 
@@ -94,7 +99,9 @@ def load_epoch(rotate: bool = False) -> None:
 load_epoch()
 COOKIE, SESSION_SECONDS = "kratos_session", 30 * 86400
 # Browsers fetch the manifest without cookies; the host's health probe has none either.
-PUBLIC = {"/login", "/healthz", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"}
+# The service worker script carries no data; public, so its update checks work after a session expires.
+PUBLIC = {"/login", "/healthz", "/manifest.webmanifest", "/sw.js", "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png",
+          "/apple-touch-icon.png"}
 # Host headers we serve (blocks DNS rebinding). The host's health probe may use an internal address.
 HOSTS = set(os.getenv("KRATOS_HOSTS", "localhost,127.0.0.1").split(","))
 # 10 failed logins a minute lock out that address; 100 a minute from anywhere lock out everyone, so a
@@ -227,6 +234,14 @@ class Profile(BaseModel):
     limitations: list[Limitation] = Field(default=[], max_length=5)
     location: Literal["home", "gym"] = "home"
     units: Literal["kg", "lb"] = "kg"
+    weekdays: list[Annotated[int, Field(ge=0, le=6)]] = Field(default=[], max_length=7)  # training days, 0 = Monday
+    train_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # HH:MM, local
+    kcal_target: int | None = Field(default=None, ge=800, le=6000)
+
+    @field_validator("weekdays")
+    @classmethod
+    def _weekdays(cls, v: list[int]) -> list[int]:
+        return sorted(set(v))
 
 
 class EquipmentIn(BaseModel):
@@ -316,6 +331,32 @@ class SetIn(BaseModel):
     load_kg: float = Field(ge=0, le=500)
     reps: int = Field(ge=0, le=600)  # seconds for timed holds
     rir: int | None = Field(default=None, ge=0, le=10)
+
+
+def _day(v: str) -> str:
+    """A calendar day in the user's own timezone, YYYY-MM-DD."""
+    if len(v) != 10:
+        raise ValueError("must be YYYY-MM-DD")
+    date.fromisoformat(v)
+    return v
+
+
+Day = Annotated[str, AfterValidator(_day)]
+
+
+class CheckinIn(BaseModel):
+    sleep_h: float = Field(ge=0, le=16)
+    soreness: int = Field(ge=1, le=5)  # 1 none … 5 very sore
+    energy: int = Field(ge=1, le=5)  # 1 drained … 5 great
+    stress: int = Field(ge=1, le=5)  # 1 calm … 5 very stressed
+    note: Text | None = Field(default=None, max_length=280)
+
+
+class MealIn(BaseModel):
+    day: Day
+    name: Text = Field(min_length=1, max_length=80)
+    kcal: int | None = Field(default=None, ge=0, le=5000)
+    protein_g: float | None = Field(default=None, ge=0, le=400)
 
 
 Cm = Annotated[float, Field(ge=10, le=250)]
@@ -612,7 +653,7 @@ def complete_session(session_id: int):
 def list_assessments():
     with db() as c:
         return [{"id": r["id"], "kind": r["kind"], "measured_at": r["measured_at"], **json.loads(r["data"])}
-                for r in c.execute("SELECT * FROM assessments ORDER BY measured_at DESC LIMIT 200")]
+                for r in c.execute("SELECT * FROM assessments ORDER BY measured_at DESC, id DESC LIMIT 200")]
 
 
 @app.post("/api/assessments", status_code=201)
@@ -641,20 +682,19 @@ async def import_pdf(file: UploadFile = File(...), use_ai: bool = Form(False)):
     data = await file.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
         raise HTTPException(413, "PDF is larger than 10 MB.")
+    # Blocking work (a child process, the AI call) goes to the threadpool so other requests keep flowing.
     try:
-        text = pdf_import.extract_text(data)
+        text, scanned = await run_in_threadpool(pdf_import.read, data)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    except Exception:  # pypdf raises a zoo of errors on malformed files
-        raise HTTPException(422, "Couldn't read that PDF.")
-    warnings = []
     if not text.strip():
-        raise HTTPException(422, "No text found — this looks like a scanned PDF. OCR isn't supported yet.")
+        raise HTTPException(422, "No readable text found, even with OCR.")
+    warnings = ["Scanned PDF, read with OCR: check every row — numbers are what OCR misreads most."] if scanned else []
     if use_ai:
         if not ai.enabled():
             raise HTTPException(503, "AI isn't configured — set KRATOS_LLM_API_KEY in .env.")
         try:
-            days = pdf_import.from_ai(ai.parse_workout(text).days)
+            days = pdf_import.from_ai((await run_in_threadpool(ai.parse_workout, text)).days)
         except ai.AIError as e:
             raise HTTPException(502, str(e))
     else:
@@ -674,15 +714,62 @@ async def import_pdf(file: UploadFile = File(...), use_ai: bool = Form(False)):
     return {"days": days, "warnings": warnings, "chars": len(text)}
 
 
+@app.get("/api/checkins")
+def list_checkins(since: Day):
+    with db() as c:
+        rows = c.execute("SELECT day, data FROM checkins WHERE day >= ? ORDER BY day", (since,)).fetchall()
+    return [checkin_out(r["day"], json.loads(r["data"])) for r in rows]
+
+
+def checkin_out(day: str, d: dict) -> dict:
+    return {"day": day, **d, **engine.readiness(d["sleep_h"], d["soreness"], d["energy"], d["stress"])}
+
+
+@app.put("/api/checkins/{day}")
+def put_checkin(day: Day, ci: CheckinIn):
+    """One check-in per day; answering again replaces it."""
+    with db() as c:
+        c.execute("INSERT INTO checkins (day, data, updated_at) VALUES (?, ?, ?) "
+                  "ON CONFLICT(day) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+                  (day, ci.model_dump_json(exclude_none=True), now()))
+    return checkin_out(day, ci.model_dump(exclude_none=True))
+
+
+@app.get("/api/meals")
+def list_meals(since: Day):
+    with db() as c:
+        return [dict(r) for r in c.execute("SELECT id, day, name, kcal, protein_g FROM meals WHERE day >= ? ORDER BY day, id", (since,))]
+
+
+@app.post("/api/meals", status_code=201)
+def add_meal(m: MealIn):
+    if m.kcal is None and m.protein_g is None:
+        raise HTTPException(422, "Add calories, protein or both.")
+    with db() as c:
+        new_id = c.execute("INSERT INTO meals (day, name, kcal, protein_g, created_at) VALUES (?, ?, ?, ?, ?)",
+                           (m.day, m.name, m.kcal, m.protein_g, now())).lastrowid
+    return {"id": new_id, **m.model_dump()}
+
+
+@app.delete("/api/meals/{meal_id}", status_code=204)
+def delete_meal(meal_id: int):
+    with db() as c:
+        c.execute("DELETE FROM meals WHERE id = ?", (meal_id,))
+
+
 @app.get("/api/progress")
 def progress():
     with db() as c:
         weights = [{"date": r["measured_at"], "kg": json.loads(r["data"])["weight_kg"]}
-                   for r in c.execute("SELECT * FROM assessments ORDER BY measured_at")
+                   for r in c.execute("SELECT * FROM assessments ORDER BY measured_at, id")
                    if "weight_kg" in json.loads(r["data"])]
         rows = c.execute("SELECT s.exercise_id, s.load_kg, s.reps, s.rir, se.started_at, se.id AS sid FROM set_logs s "
                          "JOIN sessions se ON se.id = s.session_id WHERE s.load_kg > 0 AND s.reps > 0 ORDER BY se.started_at").fetchall()
-        sessions = [dict(r) for r in c.execute("SELECT id, started_at, completed_at FROM sessions WHERE completed_at IS NOT NULL ORDER BY started_at")]
+        sessions = [{"id": r["id"], "started_at": r["started_at"], "completed_at": r["completed_at"], "day_index": r["day_index"],
+                     "day": (json.loads(r["plan"])["days"][r["day_index"]:r["day_index"] + 1] or [{"name": "Workout"}])[0]["name"],
+                     "sets": r["sets"]}
+                    for r in c.execute("SELECT s.*, p.data AS plan, (SELECT COUNT(*) FROM set_logs WHERE session_id = s.id) AS sets "
+                                       "FROM sessions s JOIN plans p ON p.id = s.plan_id WHERE s.completed_at IS NOT NULL ORDER BY s.started_at")]
         volume = c.execute("SELECT COUNT(*) AS sets, COALESCE(SUM(load_kg * reps), 0) AS kg FROM set_logs").fetchone()
         bw_best = c.execute("SELECT s.exercise_id, MAX(s.reps) AS reps, se.started_at FROM set_logs s JOIN sessions se ON se.id = s.session_id "
                             "WHERE s.load_kg = 0 AND s.reps > 0 GROUP BY s.exercise_id").fetchall()

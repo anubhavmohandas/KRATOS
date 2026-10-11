@@ -8,6 +8,8 @@ COPY web/ ./
 RUN npm run build
 
 FROM python:3.14-slim
+# Tesseract reads scanned PDFs (English).
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/api
 COPY api/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt

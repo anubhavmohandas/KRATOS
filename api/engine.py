@@ -172,3 +172,19 @@ def prescribe(item: dict, equipment: list[dict], history: list[dict]) -> dict:
     rx.update(load_kg=load, reps=reps, e1rm=round(rm, 1),
               table=[{"load_kg": w, "reps": reps_at(rm, w)} for w in weights if 1 <= reps_at(rm, w) <= 40])
     return rx
+
+
+def readiness(sleep_h: float, soreness: int, energy: int, stress: int) -> dict:
+    """0–100 from last night's sleep and how you feel (1–5 each). A nudge from your own answers, not a measurement."""
+    parts = {"sleep": (min(sleep_h, 8) - 4) / 4, "energy": (energy - 1) / 4, "soreness": (5 - soreness) / 4, "stress": (5 - stress) / 4}
+    score = round(100 * sum(w * max(0.0, parts[k]) for k, w in READINESS_WEIGHTS.items()))
+    advice = next(text for floor, text in READINESS_ADVICE if score >= floor)
+    return {"score": score, "advice": advice}
+
+
+READINESS_WEIGHTS = {"sleep": 0.35, "energy": 0.25, "soreness": 0.25, "stress": 0.15}
+READINESS_ADVICE = [
+    (70, "Ready: train as planned."),
+    (45, "Train, but keep an extra rep in reserve and end a set early if form slips."),
+    (0, "Go light today: one set fewer per exercise and 3+ reps in reserve, or take a rest day."),
+]

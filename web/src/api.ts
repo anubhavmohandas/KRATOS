@@ -12,6 +12,9 @@ export type Profile = {
   limitations: string[]
   location: 'home' | 'gym'
   units: Units
+  weekdays?: number[] // training days, 0 = Monday
+  train_time?: string | null // HH:MM
+  kcal_target?: number | null
 }
 export type Equipment = { id: number; type: string; weights_kg: number[] }
 export type Exercise = {
@@ -34,7 +37,7 @@ export type Rx = { load_kg: number | null; reps: number; note: string | null; e1
 export type PlanItem = { exercise_id: string; sets: number; rep_min: number; rep_max: number; unit: 'reps' | 'sec'; rest_seconds: number; rx?: Rx }
 export type PlanDay = { name: string; focus: string; items: PlanItem[] }
 export type Plan = { id: number; version: number; source: string; created_at: string; split: string; days: PlanDay[]; warnings: string[] }
-export type SetLog = { id: number; exercise_id: string; set_number: number; load_kg: number; reps: number; rir: number | null }
+export type SetLog = { id: number; exercise_id: string; set_number: number; load_kg: number; reps: number; rir: number | null; pending?: boolean }
 export type Assessment = { id: number; kind: 'manual' | 'camera'; measured_at: string } & Record<string, number | string>
 
 export class ApiError extends Error {
@@ -64,6 +67,58 @@ export const api = {
   send: <T>(path: string, method: 'POST' | 'PUT' | 'DELETE', body?: unknown) =>
     req<T>(path, { method, body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body) }),
 }
+
+// ---- offline: writes made without a connection wait here and replay in order once it's back ----
+// Replays are safe: the API treats a resent set (same session, exercise and set number) as the same set.
+type Pending = { path: string; method: 'POST' | 'DELETE'; body?: unknown }
+const OUTBOX = 'kratos.outbox'
+export const outbox = {
+  list: () => local.get<Pending[]>(OUTBOX) ?? [],
+  drop: (keep: (p: Pending) => boolean) => local.set(OUTBOX, outbox.list().filter(keep)),
+}
+
+/** Send now, or queue it when there's no connection (fetch itself failed). Resolves null when queued. */
+export async function sendOrQueue<T>(path: string, method: Pending['method'], body?: unknown): Promise<T | null> {
+  // Order matters: "finish" must not overtake sets still queued, or they'd be refused by a completed workout.
+  if (outbox.list().length) await flushOutbox()
+  if (outbox.list().length) {
+    local.set(OUTBOX, [...outbox.list(), { path, method, body }])
+    return null
+  }
+  try {
+    return await api.send<T>(path, method, body)
+  } catch (e) {
+    if (e instanceof ApiError) throw e // the server answered: not a connection problem
+    local.set(OUTBOX, [...outbox.list(), { path, method, body }])
+    return null
+  }
+}
+
+let flushing: Promise<void> | null = null
+/** Replay queued writes in order; stops at the first one that still can't connect. Fires `kratos:synced` when done. */
+export function flushOutbox() {
+  flushing ??= (async () => {
+    let sent = 0
+    for (let p = outbox.list()[0]; p; p = outbox.list()[0]) {
+      try {
+        await api.send(p.path, p.method, p.body)
+      } catch (e) {
+        if (!(e instanceof ApiError)) break // still offline
+        // The server refused it (say, the workout was deleted meanwhile): it will never succeed, so drop it.
+      }
+      const rest = outbox.list() // re-read: a set may have been undone or logged meanwhile
+      const i = rest.findIndex((x) => JSON.stringify(x) === JSON.stringify(p))
+      if (i >= 0) rest.splice(i, 1)
+      local.set(OUTBOX, rest)
+      sent++
+    }
+    if (sent) dispatchEvent(new Event('kratos:synced'))
+  })().finally(() => (flushing = null))
+  return flushing
+}
+
+/** Today in the user's own timezone, YYYY-MM-DD. */
+export const today = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 /** Fetch once on mount; `reload()` refetches. */
 export function useApi<T>(path: string | null) {

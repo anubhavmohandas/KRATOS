@@ -47,7 +47,8 @@ def run(tmp: Path) -> None:
     status, h = call("/train/library")
     assert (status, h["Location"]) == (303, "/login"), "pages redirect to the login form"
     assert call("/login")[0] == 200
-    assert call("/manifest.webmanifest")[0] not in (303, 401), "the manifest stays public so the PWA installs"
+    for public in ("/manifest.webmanifest", "/sw.js", "/icon-192.png", "/apple-touch-icon.png"):
+        assert call(public)[0] not in (303, 401), f"{public} stays public so the PWA installs and updates"
     assert call("/healthz")[0] == 200, "the host's health probe needs no login"
     h = call("/login")[1]
     assert "frame-ancestors 'none'" in h["Content-Security-Policy"] and h["X-Frame-Options"] == "DENY", "security headers on pages"
@@ -106,6 +107,27 @@ def run(tmp: Path) -> None:
     assert api("POST", f"/sessions/{sid}/sets", {**one, "set_number": 3})[0] == 409, "a finished workout takes no new sets"
     progress = api("GET", "/progress")[1]
     assert progress["totals"]["sets"] == 1 and len(progress["sessions"]) == 1, progress
+    assert progress["sessions"][0]["day"] == plan["days"][0]["name"] and progress["sessions"][0]["sets"] == 1, "calendar needs day and sets"
+
+    # Recovery, nutrition, calendar settings.
+    status, ci = api("PUT", "/checkins/2026-10-11", {"sleep_h": 8, "soreness": 1, "energy": 5, "stress": 1, "note": "slept well"})
+    assert status == 200 and ci["score"] == 100 and ci["advice"].startswith("Ready"), ci
+    assert api("PUT", "/checkins/2026-10-11", {"sleep_h": 4, "soreness": 5, "energy": 1, "stress": 5})[1]["score"] == 0, "answering again replaces it"
+    assert [c["day"] for c in api("GET", "/checkins?since=2026-10-01")[1]] == ["2026-10-11"]
+    for bad_day in ("2026-13-01", "2026-10-1", "today"):
+        assert api("PUT", f"/checkins/{bad_day}", {"sleep_h": 7, "soreness": 2, "energy": 3, "stress": 2})[0] == 422, bad_day
+    assert api("PUT", "/checkins/2026-10-12", {"sleep_h": 7, "soreness": 9, "energy": 3, "stress": 2})[0] == 422, "scales are 1–5"
+    assert api("PUT", "/checkins/2026-10-12", {"sleep_h": 7, "soreness": 2, "energy": 3, "stress": 2, "note": "a\x1bb"})[0] == 422
+    status, meal = api("POST", "/meals", {"day": "2026-10-11", "name": "Oats & whey", "kcal": 450, "protein_g": 32})
+    assert status == 201 and meal["id"]
+    assert api("POST", "/meals", {"day": "2026-10-11", "name": "Water"})[0] == 422, "a meal needs calories or protein"
+    assert api("POST", "/meals", {"day": "2026-10-11", "name": "<script>", "kcal": 1})[1]["name"] == "<script>", "stored as text; React escapes it"
+    assert len(api("GET", "/meals?since=2026-10-11")[1]) == 2 and api("GET", "/meals?since=2026-10-12")[1] == []
+    assert api("DELETE", f"/meals/{meal['id']}")[0] == 204 and len(api("GET", "/meals?since=2026-10-01")[1]) == 1
+    prof = {"age": 30, "height_cm": 178, "weight_kg": 80, "experience": "beginner", "goal": "strength", "days_per_week": 3, "session_minutes": 45}
+    assert api("PUT", "/profile", {**prof, "weekdays": [4, 0, 0], "train_time": "18:30"})[1]["weekdays"] == [0, 4]
+    for bad in ({"train_time": "25:00"}, {"weekdays": [7]}, {"kcal_target": 100}):
+        assert api("PUT", "/profile", {**prof, **bad})[0] == 422, bad
 
     def upload(path: str, filename: str, data: bytes):
         body = (b'--b\r\nContent-Disposition: form-data; name="file"; filename="' + filename.encode() + b'"\r\n'
@@ -116,7 +138,8 @@ def run(tmp: Path) -> None:
 
     assert len(api("GET", "/export")[1]["set_logs"]) == 1
     assert api("DELETE", "/data")[0] == 204
-    assert api("GET", "/profile")[1] is None and api("GET", "/export")[1]["set_logs"] == [], "delete-all leaves nothing"
+    wiped = api("GET", "/export")[1]
+    assert api("GET", "/profile")[1] is None and not any(wiped.values()), f"delete-all leaves nothing: {wiped}"
 
     # Backups: the snapshot taken before delete-all, a downloaded copy, and refusals.
     newest = api("GET", "/backups")[1][0]["name"]
@@ -154,7 +177,7 @@ def run(tmp: Path) -> None:
         time.sleep(0.1)
     server.should_exit = True
     print("api ok: every route gated, security headers, host/origin/body-size checks, login/logout/log-out-everywhere, forged/expired cookies refused, per-address throttle, startup backup, "
-          "journey (plan, set retry/undo/resume on any device, finish, progress, corrupt PDF, delete-all, restore from snapshot/download) with the AI down")
+          "journey (plan, set retry/undo/resume on any device, finish, progress, check-ins, meals, calendar days, corrupt PDF, delete-all, restore from snapshot/download) with the AI down")
 
 
 if __name__ == "__main__":

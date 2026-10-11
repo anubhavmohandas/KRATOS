@@ -5,22 +5,23 @@ import {
 } from '../api'
 import { Alert, Button, Card, PageHead, Spinner } from '../ui'
 import Library from './Library'
+import Calendar from './Calendar'
 import Session from './Session'
 import { Link } from '../router'
 
-const TABS = [['', 'Plan'], ['library', 'Exercise library'], ['versions', 'Versions']] as const
+const TABS = [['', 'Plan'], ['library', 'Exercise library'], ['calendar', 'Calendar'], ['versions', 'Versions']] as const
 
-export default function Train({ profile, sub }: { profile: Profile; sub: string }) {
+export default function Train({ profile, sub, onProfile }: { profile: Profile; sub: string; onProfile: (p: Profile) => void }) {
   const tab = TABS.some(([k]) => k === sub) ? sub : ''
   return (
     <>
-      <nav className="mb-6 flex gap-1 border-b border-iron-800" aria-label="Train sections">
+      <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-iron-800" aria-label="Train sections">
         {TABS.map(([k, label]) => (
           <Link key={k} href={`/train${k && '/' + k}`} aria-current={tab === k ? 'page' : undefined}
-            className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === k ? 'border-accent text-bone' : 'border-transparent text-ash hover:text-bone'}`}>{label}</Link>
+            className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-sm ${tab === k ? 'border-accent text-bone' : 'border-transparent text-ash hover:text-bone'}`}>{label}</Link>
         ))}
       </nav>
-      {tab === 'library' ? <Library profile={profile} /> : tab === 'versions' ? <Versions /> : <PlanView profile={profile} />}
+      {tab === 'library' ? <Library profile={profile} /> : tab === 'versions' ? <Versions /> : tab === 'calendar' ? <Calendar profile={profile} onProfile={onProfile} /> : <PlanView profile={profile} />}
     </>
   )
 }

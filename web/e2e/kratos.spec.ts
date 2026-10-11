@@ -204,3 +204,102 @@ test('log out everywhere ends every session', async ({ page, browser }, info) =>
   await expect(laptop).toHaveURL(/\/login$/)
   await other.close()
 })
+
+test('recovery: a low check-in shows its advice on the dashboard and in the workout', async ({ page }) => {
+  await fresh(page)
+  await seed(page)
+  await page.goto('/')
+  const card = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Readiness', exact: true }) })
+  await card.getByLabel('Sleep last night (hours)').fill('5')
+  await card.getByRole('button', { name: 'Drained' }).click()
+  await card.getByRole('button', { name: 'Very sore' }).click()
+  await card.getByRole('button', { name: 'Save check-in' }).click()
+  await expect(card.getByText(/^Go light today/)).toBeVisible()
+  await page.goto('/train')
+  await page.getByRole('button', { name: /^Start / }).click()
+  await expect(page.getByText(/^Readiness \d+ today\. Go light/)).toBeVisible()
+  await page.goto('/body/recovery')
+  await expect(page.getByRole('cell', { name: '5 h' })).toBeVisible()
+})
+
+test('nutrition: meals add up against the protein target', async ({ page }) => {
+  await fresh(page)
+  await seed(page)
+  await page.goto('/body/nutrition')
+  await expect(page.getByText('/ 144 g')).toBeVisible() // 80 kg × 1.8 g/kg for strength
+  await page.getByLabel('What').fill('Chicken & rice')
+  await page.getByLabel('Calories (kcal)').fill('650')
+  await page.getByLabel('Protein (g)').fill('48')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(page.getByRole('meter', { name: 'Protein' })).toHaveAttribute('aria-valuenow', '48')
+  await page.getByRole('button', { name: 'Delete Chicken & rice' }).click()
+  await expect(page.getByRole('meter', { name: 'Protein' })).toHaveAttribute('aria-valuenow', '0')
+})
+
+test('calendar: training days show as planned and export to the phone calendar', async ({ page }) => {
+  await fresh(page)
+  await seed(page)
+  await page.goto('/train/calendar')
+  for (const d of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']) await page.getByRole('button', { name: d, exact: true }).click()
+  await page.getByLabel('Usual time (optional)').fill('18:30')
+  await page.getByRole('button', { name: 'Save schedule' }).click()
+  await expect(page.getByText('Schedule saved.')).toBeVisible()
+  await expect(page.getByTitle(/^Planned: /).first()).toBeVisible()
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Add next 4 weeks to my calendar' }).click()
+  const file = await (await download).path()
+  const text = (await import('node:fs')).readFileSync(file, 'utf8')
+  expect(text.match(/BEGIN:VEVENT/g)?.length, '28 days, every day a training day').toBeGreaterThanOrEqual(27)
+  expect(text).toContain('T183000')
+  expect(text).toContain('TRIGGER:-PT30M')
+})
+
+test('body lab: a second measurement shows the change since the last one', async ({ page }) => {
+  await fresh(page)
+  await seed(page)
+  for (const waist of [84, 82.5]) expect((await page.request.post('/api/assessments', { data: { kind: 'manual', waist_cm: waist, weight_kg: 80 } })).ok()).toBe(true)
+  await page.goto('/body')
+  const changes = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Since last time' }) })
+  await expect(changes.getByText('−1.5 cm')).toBeVisible()
+})
+
+test('PDF import: a scanned plan is read with OCR', async ({ page }) => {
+  const { execFileSync } = await import('node:child_process')
+  try { execFileSync('tesseract', ['--version']) } catch { test.skip(true, 'tesseract is not installed') }
+  const scanned = execFileSync('../api/.venv/bin/python', ['-c',
+    'import sys; sys.path.insert(0, "../api"); import pdf_import as p; sys.stdout.buffer.write(p._scanned(p._pdf(["Day 1 - Legs", "Goblet squat 3 x 12", "Push-ups 3 x 10"])))'])
+  await fresh(page)
+  await seed(page)
+  await page.goto('/space/pdf')
+  await page.getByLabel(/Workout PDF/).setInputFiles({ name: 'scan.pdf', mimeType: 'application/pdf', buffer: scanned })
+  await page.getByRole('button', { name: 'Extract' }).click()
+  await expect(page.getByText(/read with OCR/)).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByLabel('Exercise for “Goblet squat”')).toHaveValue('goblet_squat')
+})
+
+test('offline: the app opens, sets are kept, and they sync when the connection returns', async ({ page, context, browserName }) => {
+  test.skip(browserName === 'webkit', 'service workers are only reliable in Playwright Chromium')
+  await fresh(page)
+  await seed(page)
+  await page.goto('/train')
+  await page.evaluate(() => navigator.serviceWorker.ready)
+  await page.getByRole('button', { name: /^Start / }).click()
+  await expect(page.getByText(/^Live · /)).toBeVisible()
+  await page.reload() // now under the service worker, which caches the shell, plan and workout
+  await expect(page.getByText(/^Live · /)).toBeVisible()
+  const sid = JSON.parse((await page.evaluate(() => localStorage.getItem('kratos.session')))!).id
+
+  await context.setOffline(true)
+  await expect(page.getByText(/You’re offline/)).toBeVisible()
+  await page.getByLabel(/^(Reps|Seconds)$/).fill('7')
+  await page.getByRole('button', { name: 'Log set' }).click()
+  await expect(page.getByText('offline · will sync')).toBeVisible()
+  await page.reload() // a dead zone mid-workout: the app still opens, the queued set still shows
+  await expect(page.getByText(/^Live · /)).toBeVisible()
+  await expect(page.getByText('offline · will sync')).toBeVisible()
+
+  await context.setOffline(false)
+  await expect(page.getByText('offline · will sync')).toHaveCount(0, { timeout: 15_000 })
+  const sets = (await (await page.request.get(`/api/sessions/${sid}`)).json()).sets
+  expect(sets.map((s: { reps: number }) => s.reps)).toEqual([7])
+})
