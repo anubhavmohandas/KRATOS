@@ -14,7 +14,7 @@ Single user, behind one password. Workouts and body data live in `api/kratos.db`
 ./start.sh            # first run installs everything → http://localhost:8000
 ```
 
-Set `KRATOS_PASSWORD` (12+ characters) in `.env` first. The API refuses to start without it. The password guards every page and API route, `/api/docs` included.
+Set `KRATOS_PASSWORD` (12+ characters) in `.env` first, and once per clone run `git config core.hooksPath .githooks` so a commit can never carry `.env` or an API key. The API refuses to start without it. The password guards every page and API route, `/api/docs` included.
 
 Development with hot reload (two terminals):
 
@@ -102,4 +102,3 @@ cd web && npm test && npx tsc
 - **Scanned PDFs aren't supported yet** (no OCR).
 - **Background-tab alerts can arrive late.** Browsers throttle background tabs, though the time shown is always exact. Playing music keeps the tab awake.
 - **Not built yet:** training calendar, recovery check-ins, nutrition, offline mode, streaming-service music.
-- **No auth.** The API binds to 127.0.0.1 and rejects foreign Host headers. Add auth before exposing it beyond localhost.

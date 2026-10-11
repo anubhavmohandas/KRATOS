@@ -1,0 +1,11 @@
+#!/bin/sh
+# Refuse a commit that stages .env or adds anything shaped like an API key or private key.
+# Enable once per clone: git config core.hooksPath .githooks
+if git diff --cached --name-only | grep -qE '(^|/)\.env$'; then
+  echo "pre-commit: .env holds secrets and must never be committed." >&2
+  exit 1
+fi
+if git diff --cached -U0 | grep -E '^\+' | grep -qE 'nvapi-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|BEGIN [A-Z ]*PRIVATE KEY'; then
+  echo "pre-commit: a staged line looks like a secret. Move it to .env." >&2
+  exit 1
+fi
