@@ -104,13 +104,30 @@ def run(tmp: Path) -> None:
     progress = api("GET", "/progress")[1]
     assert progress["totals"]["sets"] == 1 and len(progress["sessions"]) == 1, progress
 
-    form = (b'--b\r\nContent-Disposition: form-data; name="file"; filename="plan.pdf"\r\nContent-Type: application/pdf\r\n\r\n'
-            b"%PDF-1.7 truncated garbage\r\n--b--\r\n")
-    assert api("POST", "/imports/pdf", data=form, ctype="multipart/form-data; boundary=b")[0] == 422, "a corrupt PDF is a 422"
+    def upload(path: str, filename: str, data: bytes):
+        body = (b'--b\r\nContent-Disposition: form-data; name="file"; filename="' + filename.encode() + b'"\r\n'
+                b"Content-Type: application/octet-stream\r\n\r\n" + data + b"\r\n--b--\r\n")
+        return api("POST", path, data=body, ctype="multipart/form-data; boundary=b")
+
+    assert upload("/imports/pdf", "plan.pdf", b"%PDF-1.7 truncated garbage")[0] == 422, "a corrupt PDF is a 422"
 
     assert len(api("GET", "/export")[1]["set_logs"]) == 1
     assert api("DELETE", "/data")[0] == 204
     assert api("GET", "/profile")[1] is None and api("GET", "/export")[1]["set_logs"] == [], "delete-all leaves nothing"
+
+    # Backups: the snapshot taken before delete-all, a downloaded copy, and refusals.
+    newest = api("GET", "/backups")[1][0]["name"]
+    status, rows = api("POST", f"/backups/{newest}/restore")
+    assert status == 200 and rows["set_logs"] == 1 and api("GET", "/profile")[1], "delete-all is undone from its snapshot"
+    with opener.open(urllib.request.Request(f"http://127.0.0.1:{port}/api/backup", headers={"Cookie": cookie})) as r:
+        copy = r.read()
+    assert copy.startswith(b"SQLite format 3\x00") and "attachment" in r.headers["Content-Disposition"]
+    assert api("DELETE", "/data")[0] == 204
+    status, rows = upload("/restore", "kratos.db", copy)
+    assert status == 200 and rows["set_logs"] == 1, "a downloaded backup restores"
+    assert upload("/restore", "x.db", b"SQLite format 3\x00" + b"junk" * 100)[0] == 422, "a broken backup is refused"
+    assert api("GET", "/export")[1]["set_logs"], "…and leaves the data alone"
+    assert api("POST", "/backups/kratos.db/restore")[0] == 404, "only snapshot names restore"
 
     exp = str(int(time.time()) - 1)
     for bad in (f"kratos_session={exp}.{main.sign(exp)}", "kratos_session=9999999999.forged", "kratos_session=²",
@@ -134,7 +151,7 @@ def run(tmp: Path) -> None:
         time.sleep(0.1)
     server.should_exit = True
     print("api ok: every route gated, security headers, host/origin/body-size checks, login/logout/log-out-everywhere, forged/expired cookies refused, per-address throttle, startup backup, "
-          "journey (plan, set retry/undo/resume, finish, progress, corrupt PDF, delete-all) with the AI down")
+          "journey (plan, set retry/undo/resume, finish, progress, corrupt PDF, delete-all, restore from snapshot/download) with the AI down")
 
 
 if __name__ == "__main__":

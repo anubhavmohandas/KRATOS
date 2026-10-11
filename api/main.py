@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import sqlite3
+import tempfile
 import threading
 import time
 import urllib.error
@@ -21,6 +22,7 @@ from typing import Annotated, Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.background import BackgroundTask
 from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
 import ai
@@ -29,6 +31,8 @@ import engine
 import pdf_import
 
 DB_PATH = backup.DB
+BACKUPS = DB_PATH.parent / "backups"
+SNAPSHOT = re.compile(r"kratos-\d{8}T\d{12}Z\.db")
 MAX_UPLOAD = 10 * 1024 * 1024
 
 PASSWORD = os.getenv("KRATOS_PASSWORD", "")
@@ -48,6 +52,8 @@ CREATE TABLE IF NOT EXISTS set_logs (id INTEGER PRIMARY KEY, session_id INTEGER 
                                      rir INTEGER, logged_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS set_logs_exercise ON set_logs (exercise_id, id);
 """
+TABLES = ["profile", "equipment", "assessments", "plans", "sessions", "set_logs"]
+MAX_RESTORE = 50 * 1024 * 1024
 
 
 def db() -> sqlite3.Connection:
@@ -692,15 +698,64 @@ def progress():
 @app.get("/api/export")
 def export():
     with db() as c:
-        tables = ["profile", "equipment", "assessments", "plans", "sessions", "set_logs"]
-        return {t: [dict(r) for r in c.execute(f"SELECT * FROM {t}")] for t in tables}  # noqa: S608 — fixed names
+        return {t: [dict(r) for r in c.execute(f"SELECT * FROM {t}")] for t in TABLES}  # noqa: S608 — fixed names
+
+
+@app.get("/api/backup")
+def download_backup():
+    """A fresh, verified snapshot to keep off the server (the daily ones share the DB's disk)."""
+    fd, name = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    path = backup.snapshot(Path(name))
+    return FileResponse(path, media_type="application/vnd.sqlite3", filename=f"kratos-{datetime.now(timezone.utc):%Y-%m-%d}.db",
+                        background=BackgroundTask(path.unlink, missing_ok=True))
+
+
+@app.get("/api/backups")
+def list_backups():
+    return [{"name": p.name, "bytes": p.stat().st_size, "taken_at": datetime.fromtimestamp(p.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")}
+            for p in sorted(BACKUPS.glob("kratos-*.db"), reverse=True)]
+
+
+def restore_bytes(data: bytes) -> dict:
+    fd, name = tempfile.mkstemp(suffix=".db")
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        try:
+            backup.check(tmp)
+        except sqlite3.DatabaseError:
+            raise HTTPException(422, "That file isn't a usable KRATOS backup (damaged, or from something else). Nothing was changed.")
+        backup.backup()  # today's data becomes the newest snapshot, so a wrong restore is one click to undo
+        backup.restore(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)
+    with db() as c:
+        c.executescript(SCHEMA)  # an older backup gains the tables added since
+        return {t: c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in TABLES}  # noqa: S608 — fixed names
+
+
+@app.post("/api/backups/{name}/restore")
+def restore_snapshot(name: str):
+    if not SNAPSHOT.fullmatch(name) or not (BACKUPS / name).is_file():
+        raise HTTPException(404, "Backup not found")
+    return restore_bytes((BACKUPS / name).read_bytes())  # read first: the safety snapshot may prune this file
+
+
+@app.post("/api/restore")
+async def restore_upload(file: UploadFile = File(...)):
+    data = await file.read(MAX_RESTORE + 1)
+    if len(data) > MAX_RESTORE:
+        raise HTTPException(413, "Backup is larger than 50 MB.")
+    return restore_bytes(data)
 
 
 @app.delete("/api/data", status_code=204)
 def delete_all():
+    backup.backup()  # "Delete everything" by mistake is recoverable from Settings → Backups
     with db() as c:
-        c.executescript("DELETE FROM set_logs; DELETE FROM sessions; DELETE FROM plans; DELETE FROM assessments; "
-                        "DELETE FROM equipment; DELETE FROM profile;")
+        c.executescript("".join(f"DELETE FROM {t};" for t in reversed(TABLES)))  # children before parents
     with db() as c:
         c.execute("VACUUM")  # actually drop the deleted pages from the file
 

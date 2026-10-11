@@ -22,7 +22,7 @@ export default function Space({ sub }: { sub: string }) {
       {tab === 'music' ? <MusicPage /> : tab === 'timers' ? <TimersPage /> : tab === 'pdf' ? <Import /> : (
         <div className="space-y-5">
           <DataCard />
-          <p className="text-sm text-ash">Install KRATOS as an app: in Chrome or Edge use the install icon in the address bar; on iPhone, Share → Add to Home Screen. Music files live in this browser; workouts and body data live in <code className="font-mono">api/kratos.db</code>.</p>
+          <p className="text-sm text-ash">Install KRATOS as an app: in Chrome or Edge use the install icon in the address bar; on iPhone, Share → Add to Home Screen. Music files live in this browser; workouts and body data live on the KRATOS server.</p>
           <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <a href="/logout" className="text-ash underline hover:text-bone">Log out of this device</a>
             <button className="text-ash underline hover:text-ember" onClick={logoutEverywhere}>Log out everywhere</button>

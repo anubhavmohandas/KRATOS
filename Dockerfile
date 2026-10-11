@@ -16,4 +16,7 @@ COPY --from=web /web/dist /app/web/dist
 ENV KRATOS_DB=/data/kratos.db
 RUN mkdir /data
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=30s --timeout=5s CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"]
+# The host's HTTPS proxy is the only way in, so trust its X-Forwarded-For/-Proto: the login throttle sees real
+# client addresses and HSTS/secure cookies see HTTPS.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

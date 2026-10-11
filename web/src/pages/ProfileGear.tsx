@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, fromKg, LABELS, toKg, useApi, type Equipment, type Profile, type Units } from '../api'
+import { api, fromKg, LABELS, local, NEXT_DAY_KEY, SESSION_KEY, toKg, useApi, type Equipment, type Profile, type Units } from '../api'
 import { Alert, Button, Card, Chip, Field, Spinner } from '../ui'
 
 const LOADABLE = ['dumbbells', 'kettlebell', 'barbell', 'cable']
@@ -203,29 +203,90 @@ function EquipmentCard({ units, location, setLocation, equip }: {
   )
 }
 
+type Snapshot = { name: string; bytes: number; taken_at: string }
+
+/** Data that changed under the app: drop what this browser remembers about it and start fresh. */
+function reloadFresh() {
+  for (const k of [SESSION_KEY, NEXT_DAY_KEY, 'kratos.coach']) local.set(k, null)
+  location.assign('/')
+}
+
 export function DataCard() {
-  const [busy, setBusy] = useState(false)
-  async function exportData() {
+  const snaps = useApi<Snapshot[]>('/backups')
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+
+  async function run(kind: string, fn: () => Promise<unknown>) {
+    setBusy(kind)
+    setErr('')
+    try {
+      await fn()
+    } catch (e) {
+      setErr((e as Error).message)
+      setBusy('')
+    }
+  }
+  const exportData = () => run('export', async () => {
     const data = await api.get('/export')
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
     a.download = `kratos-export-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(a.href)
+    setBusy('')
+  })
+  const restore = (what: string, body?: FormData) => {
+    if (!confirm(`Replace everything in KRATOS with ${what}? Today’s data is snapshotted first, so you can undo it from this list.`)) return
+    run('restore', async () => {
+      await api.send(body ? '/restore' : `/backups/${what}/restore`, 'POST', body)
+      reloadFresh()
+    })
   }
-  async function wipe() {
-    if (!confirm('Delete your profile, equipment, plans, workouts and body data? This cannot be undone.')) return
-    setBusy(true)
-    await api.send('/data', 'DELETE')
-    location.assign('/')
+  const wipe = () => {
+    if (!confirm('Delete your profile, equipment, plans, workouts and body data? A snapshot is kept in Backups for 14 days in case this was a mistake.')) return
+    run('wipe', async () => {
+      await api.send('/data', 'DELETE')
+      reloadFresh()
+    })
   }
+
   return (
-    <Card title="Your data">
-      <p className="mb-4 text-sm text-ash">Stored in <code className="font-mono text-bone">api/kratos.db</code> on this machine. Camera frames and uploaded PDFs are never saved.</p>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="ghost" onClick={exportData}>Export JSON</Button>
-        <Button variant="danger" busy={busy} onClick={wipe}>Delete everything</Button>
-      </div>
-    </Card>
+    <>
+      <Card title="Your data">
+        <p className="mb-4 text-sm text-ash">Workouts and body data live in the KRATOS database on the server. Camera frames and uploaded PDFs are never saved.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" busy={busy === 'export'} onClick={exportData}>Export JSON</Button>
+          <Button variant="danger" busy={busy === 'wipe'} onClick={wipe}>Delete everything</Button>
+        </div>
+      </Card>
+      <Card title="Backups">
+        <p className="mb-4 text-sm text-ash">A verified snapshot is taken every day and before a delete or restore; the last 14 are kept on the server. Download one now and then so a copy survives losing the server.</p>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <a href="/api/backup" download className="inline-flex items-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-iron-950 hover:bg-accent-hi">Download backup</a>
+          <label className="cursor-pointer text-sm text-ash underline hover:text-bone">
+            Restore from a file…
+            <input type="file" accept=".db,application/vnd.sqlite3,application/octet-stream" className="sr-only" disabled={!!busy} onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (!f) return
+              const fd = new FormData()
+              fd.append('file', f)
+              restore(`“${f.name}”`, fd)
+            }} />
+          </label>
+        </div>
+        {err && <div className="mb-3"><Alert tone="error">{err}</Alert></div>}
+        {snaps.loading ? <Spinner /> : !snaps.data?.length ? <p className="text-sm text-ash">No snapshots yet — the first is taken within an hour of starting.</p> : (
+          <ul className="divide-y divide-iron-800 text-sm">
+            {snaps.data.map((b) => (
+              <li key={b.name} className="flex items-center justify-between gap-3 py-2">
+                <span>{new Date(b.taken_at).toLocaleString()} <span className="font-mono text-xs text-ash">· {Math.max(1, Math.round(b.bytes / 1024))} KB</span></span>
+                <Button variant="ghost" className="!px-3 !py-1 text-xs" disabled={!!busy} onClick={() => restore(b.name)}>Restore</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </>
   )
 }

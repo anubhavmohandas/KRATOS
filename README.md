@@ -42,7 +42,17 @@ The `Dockerfile` builds one image: the API serving the built UI on port 8000. Th
 
 Point the host's health check at `/healthz`. It needs no login and fails if the database on the volume can't be read.
 
-Backups run inside the API: when the newest snapshot is over a day old, it takes a new one and verifies it restores. The last 14 are kept, on the same disk as the DB, so copy `/data/backups` elsewhere or download `/api/export` to survive losing that disk. To restore a snapshot, run `python backup.py restore /data/backups/<file>` and restart the API.
+Backups run inside the API: when the newest snapshot is over a day old, it takes a new one and verifies it restores. It also snapshots before **Delete everything** and before every restore. The last 14 are kept on the same disk as the DB.
+
+**Settings → Backups** lists them, each with a Restore button. It also offers **Download backup**, a fresh verified `.db`, and **Restore from a file**. A restore refuses a damaged file, one from another app, and one carrying triggers or views. No restart is needed.
+
+To survive losing the server's disk, pull a copy off it daily. For example, on a Mac put `password=<your password>` in `~/.kratos-login` (`chmod 600`), `mkdir ~/KRATOS-backups`, and add this with `crontab -e`:
+
+```sh
+0 9 * * * curl -sc /tmp/kratos.jar -d @$HOME/.kratos-login https://your.domain/login >/dev/null && curl -sfb /tmp/kratos.jar -o ~/KRATOS-backups/kratos-$(date +\%F).db https://your.domain/api/backup
+```
+
+From a shell on the server, `python backup.py restore /data/backups/<file>` does the same restore; restart the API afterwards.
 
 Camera features need `localhost` or HTTPS, so opening the app from your phone over the LAN needs HTTPS. Install it as an app from the browser's install button (PWA manifest included).
 
