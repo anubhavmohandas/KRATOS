@@ -53,8 +53,9 @@ function App() {
   if (profile.loading) page = <Spinner />
   else if (profile.error) page = <Alert tone="error">{profile.error.message} Start it with <code className="font-mono">./start.sh</code>.</Alert>
   else if (!tab) page = <><PageHead kicker="404" title="No such page" /><LinkButton href="/">Back to dashboard</LinkButton></>
-  else if (!p || id === 'coach') page = <Coach profile={p} onSaved={onSaved} />
-  else page = { '': <Dashboard profile={p} />, train: <Train profile={p} sub={sub} />, body: <Body profile={p} />, progress: <Progress profile={p} />, space: <Space sub={sub} /> }[id as string]
+  // My Space works without a profile, so a wiped install can still reach Settings → Backups to undo it.
+  else if ((!p && id !== 'space') || id === 'coach') page = <Coach profile={p} onSaved={onSaved} />
+  else page = id === 'space' ? <Space sub={sub} /> : { '': <Dashboard profile={p!} />, train: <Train profile={p!} sub={sub} />, body: <Body profile={p!} />, progress: <Progress profile={p!} /> }[id as string]
 
   return (
     <div className="min-h-dvh lg:pl-60">

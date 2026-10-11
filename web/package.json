@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "e2e": "vite build && playwright test",
     "test": "node --test src/vision/metrics.test.ts src/timer/logic.test.ts src/music/youtube.test.ts src/trainer/anims.test.ts",
     "postinstall": "mkdir -p public && rm -rf public/mediapipe && cp -R node_modules/@mediapipe/tasks-vision/wasm public/mediapipe"
   },
@@ -16,6 +17,7 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",

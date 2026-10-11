@@ -46,10 +46,10 @@ Backups run inside the API: when the newest snapshot is over a day old, it takes
 
 **Settings → Backups** lists them, each with a Restore button. It also offers **Download backup**, a fresh verified `.db`, and **Restore from a file**. A restore refuses a damaged file, one from another app, and one carrying triggers or views. No restart is needed.
 
-To survive losing the server's disk, pull a copy off it daily. For example, on a Mac put `password=<your password>` in `~/.kratos-login` (`chmod 600`), `mkdir ~/KRATOS-backups`, and add this with `crontab -e`:
+To survive losing the server's disk, pull a copy off it daily. For example, on a Mac save the password with `printf %s 'your-password' > ~/.kratos-pw && chmod 600 ~/.kratos-pw`, `mkdir ~/KRATOS-backups`, and add this with `crontab -e`:
 
 ```sh
-0 9 * * * curl -sc /tmp/kratos.jar -d @$HOME/.kratos-login https://your.domain/login >/dev/null && curl -sfb /tmp/kratos.jar -o ~/KRATOS-backups/kratos-$(date +\%F).db https://your.domain/api/backup
+0 9 * * * curl -sc /tmp/kratos.jar --data-urlencode password@$HOME/.kratos-pw https://your.domain/login >/dev/null && curl -sfb /tmp/kratos.jar -o ~/KRATOS-backups/kratos-$(date +\%F).db https://your.domain/api/backup
 ```
 
 From a shell on the server, `python backup.py restore /data/backups/<file>` does the same restore; restart the API afterwards.
@@ -108,9 +108,20 @@ To add an exercise, add one entry to `exercises.json`. Reuse an existing `anim`,
 cd api && .venv/bin/python test_engine.py && .venv/bin/python pdf_import.py && .venv/bin/python ai.py
 cd api && .venv/bin/python test_api.py && .venv/bin/python backup.py test
 cd web && npm test && npx tsc
+cd web && npx playwright install chromium webkit && npm run e2e   # first time; afterwards just npm run e2e
 ```
 
-`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `ai.py` checks that AI-parsed plans drop bad items without rejecting the rest, and that a 429, bad key, outage, dropped connection, timeout or junk reply from the provider each becomes a clear error. `test_api.py` starts a real server and checks that every route is gated, that forged and expired cookies are refused, and that login is throttled. It then runs the core journey with the AI provider down: plan, a resent set (stored once), undo, resume, finish, progress, a corrupt PDF and delete-all. `backup.py test` checks the snapshot, prune and restore cycle. `npm test` covers the rep counter, body metrics, scan positioning cues, timer maths, and that every exercise has its own 3D animation.
+`test_engine.py` generates about 64k plan items across equipment sets, splits, goals and limitations. It asserts that none needs equipment you don't own, hits an excluded limitation, or triggers a false "no exercise fits" warning. `ai.py` checks that AI-parsed plans drop bad items without rejecting the rest, and that a 429, bad key, outage, dropped connection, timeout or junk reply from the provider each becomes a clear error. `test_api.py` starts a real server and checks that every route is gated, that forged and expired cookies are refused, and that login is throttled. It then runs the core journey with the AI provider down: plan, a resent set (stored once), undo, resume, finish, progress, a corrupt PDF and delete-all. `backup.py test` checks the snapshot, prune and restore cycle. `npm run e2e` builds the UI and runs it against a real API on a throwaway DB. It drives desktop Chrome, Android Chrome (Pixel 7) and iPhone Safari (WebKit, iPhone 15), and fails on any page error or CSP violation. It covers:
+- the password gate
+- first run through plan, workout and progress, including a 3D demo that is drawn and animating
+- a reload mid-workout, resume on a second device, and a stale session that must not trap you
+- timers across a reload, and the coach with AI off
+- music files that play, persist, and stop when deleted
+- the camera scan and rep counter, which start, load the pose model and stop (Chrome's fake camera; WebKit has none)
+- PDF import, backup download, wipe and undo, log out everywhere
+- every page at phone width without sideways scroll
+
+`npm test` covers the rep counter, body metrics, scan positioning cues, timer maths, and that every exercise has its own 3D animation.
 
 ## Honest limits
 

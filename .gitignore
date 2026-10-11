@@ -8,3 +8,5 @@ __pycache__/
 .DS_Store
 api/backups/
 api/session-epoch
+web/test-results/
+web/playwright-report/

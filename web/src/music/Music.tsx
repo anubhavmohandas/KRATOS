@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { db, toTrack, type Playlist, type Track } from './db'
+import { audioOf, db, toTrack, type Playlist, type Track } from './db'
 import { Link } from '../router'
 import { api } from '../api'
 import { createPlayer, parseYouTube, playlistIds, STATE, type YTPlayer } from './youtube'
@@ -162,7 +162,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
     }
     ytNow.current?.stopVideo()
     if (url.current) URL.revokeObjectURL(url.current)
-    url.current = URL.createObjectURL(t.blob!)
+    url.current = URL.createObjectURL(audioOf(t))
     audio.current.src = url.current
     audio.current.play().catch(() => setPlaying(false))
   }
@@ -219,6 +219,7 @@ export function MusicProvider({ children }: { children: ReactNode }) {
       return errors
     },
     removeTrack: async (id) => {
+      if (queue[index] === id) ctx.stop() // otherwise it plays on with no player left to stop it
       await db.del('tracks', id)
       setTracks((t) => t.filter((x) => x.id !== id))
       for (const p of playlists) if (p.trackIds.includes(id)) await ctx.savePlaylist({ ...p, trackIds: p.trackIds.filter((x) => x !== id) })

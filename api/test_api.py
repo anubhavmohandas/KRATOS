@@ -90,7 +90,9 @@ def run(tmp: Path) -> None:
     status, body = api("POST", f"/plans/{plan['id']}/explain")
     assert status == 502 and "Everything else" in body["detail"], "AI down → a clear 502, not a 500"
 
+    assert api("GET", "/sessions/open")[1] is None
     sid = api("POST", "/sessions", {"plan_id": plan["id"], "day_index": 0})[1]["id"]
+    assert api("GET", "/sessions/open")[1] == {"id": sid, "plan_id": plan["id"], "day_index": 0}, "another device can resume it"
     one = {"exercise_id": plan["days"][0]["items"][0]["exercise_id"], "set_number": 1, "load_kg": 10, "reps": 8, "rir": 2}
     first = api("POST", f"/sessions/{sid}/sets", one)[1]
     retry = api("POST", f"/sessions/{sid}/sets", {**one, "reps": 9})[1]  # same set resent after a lost response
@@ -100,6 +102,7 @@ def run(tmp: Path) -> None:
     assert [(s["set_number"], s["reps"]) for s in sets] == [(1, 9), (2, 8)], sets
     assert api("DELETE", f"/sessions/{sid}/sets/{second['id']}")[0] == 204
     assert api("POST", f"/sessions/{sid}/complete")[0] == 200
+    assert api("GET", "/sessions/open")[1] is None, "a finished workout isn't offered for resume"
     assert api("POST", f"/sessions/{sid}/sets", {**one, "set_number": 3})[0] == 409, "a finished workout takes no new sets"
     progress = api("GET", "/progress")[1]
     assert progress["totals"]["sets"] == 1 and len(progress["sessions"]) == 1, progress
@@ -151,7 +154,7 @@ def run(tmp: Path) -> None:
         time.sleep(0.1)
     server.should_exit = True
     print("api ok: every route gated, security headers, host/origin/body-size checks, login/logout/log-out-everywhere, forged/expired cookies refused, per-address throttle, startup backup, "
-          "journey (plan, set retry/undo/resume, finish, progress, corrupt PDF, delete-all, restore from snapshot/download) with the AI down")
+          "journey (plan, set retry/undo/resume on any device, finish, progress, corrupt PDF, delete-all, restore from snapshot/download) with the AI down")
 
 
 if __name__ == "__main__":

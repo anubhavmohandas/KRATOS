@@ -556,6 +556,17 @@ def start_session(s: SessionIn):
     return {"id": new_id, "plan_id": s.plan_id, "day_index": s.day_index}
 
 
+@app.get("/api/sessions/open")
+def open_session():
+    """The unfinished workout from the last 12 hours, so another device (or the iPhone home-screen app,
+    which doesn't share Safari's storage) resumes it instead of starting over."""
+    cutoff = datetime.fromtimestamp(time.time() - 12 * 3600, timezone.utc).isoformat(timespec="seconds")
+    with db() as c:
+        row = c.execute("SELECT id, plan_id, day_index FROM sessions WHERE completed_at IS NULL AND started_at > ? "
+                        "ORDER BY id DESC LIMIT 1", (cutoff,)).fetchone()
+    return dict(row) if row else None
+
+
 @app.get("/api/sessions/{session_id}")
 def get_session(session_id: int):
     with db() as c:

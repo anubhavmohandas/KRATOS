@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
-  api, estMinutes, fmtLoad, fmtTarget, LABELS, local, NEXT_DAY_KEY, PATTERNS, SESSION_KEY, usable, useApi, useCatalog,
-  type ActiveSession, type Equipment, type Plan, type PlanDay, type PlanItem, type Profile, type Units,
+  api, estMinutes, fmtLoad, fmtTarget, LABELS, local, NEXT_DAY_KEY, PATTERNS, usable, useActiveSession, useApi, useCatalog,
+  type Equipment, type Plan, type PlanDay, type PlanItem, type Profile, type Units,
 } from '../api'
 import { Alert, Button, Card, PageHead, Spinner } from '../ui'
 import Library from './Library'
@@ -30,7 +30,7 @@ function PlanView({ profile }: { profile: Profile }) {
   const health = useApi<{ ai: boolean; model: string | null }>('/health')
   const equipment = useApi<Equipment[]>('/equipment')
   const catalog = useCatalog()
-  const [active, setActive] = useState<ActiveSession | null>(() => local.get(SESSION_KEY))
+  const [active, setActive] = useActiveSession()
   const [day, setDay] = useState(() => local.get<number>(NEXT_DAY_KEY) ?? 0)
   const [busy, setBusy] = useState<'' | 'gen' | 'start' | 'why' | 'save'>('')
   const [err, setErr] = useState('')
@@ -57,9 +57,7 @@ function PlanView({ profile }: { profile: Profile }) {
   })
   const start = () => run('start', async () => {
     const s = await api.send<{ id: number }>('/sessions', 'POST', { plan_id: plan.data!.id, day_index: day })
-    const a = { id: s.id, plan_id: plan.data!.id, day }
-    local.set(SESSION_KEY, a)
-    setActive(a)
+    setActive({ id: s.id, plan_id: plan.data!.id, day })
   })
   const explain = () => run('why', async () => setWhy((await api.send<{ text: string }>(`/plans/${plan.data!.id}/explain`, 'POST')).text))
   const save = () => run('save', async () => {
@@ -68,21 +66,22 @@ function PlanView({ profile }: { profile: Profile }) {
     setDraft(null)
   })
 
-  if (plan.loading) return <Spinner />
-  if (active && plan.data?.id === active.plan_id) {
-    return <Session plan={plan.data} dayIndex={active.day} sessionId={active.id} units={profile.units} onExit={() => {
-      const next = (active.day + 1) % plan.data!.days.length
-      local.set(SESSION_KEY, null)
+  /** Leave the workout view; `done` moves on to the next day. */
+  function endSession(done: boolean) {
+    if (done && active && plan.data) {
+      const next = (active.day + 1) % plan.data.days.length
       local.set(NEXT_DAY_KEY, next)
       setDay(next)
-      setActive(null)
-      plan.reload()
-    }} />
-  }
-  if (active && plan.data && plan.data.id !== active.plan_id) { // that plan was replaced — the session can't resume
-    local.set(SESSION_KEY, null)
+    }
     setActive(null)
+    plan.reload()
   }
+
+  if (plan.loading) return <Spinner />
+  if (active && plan.data?.id === active.plan_id) {
+    return <Session plan={plan.data} dayIndex={active.day} sessionId={active.id} units={profile.units} onExit={endSession} />
+  }
+  if (active && plan.data && plan.data.id !== active.plan_id) setActive(null) // that plan was replaced — the session can't resume
   if (plan.error && plan.error.status !== 404) return <Alert tone="error">{plan.error.message}</Alert>
 
   if (!plan.data) {

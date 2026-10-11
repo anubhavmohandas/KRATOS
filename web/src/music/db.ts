@@ -1,7 +1,10 @@
 // Your audio files live in this browser's IndexedDB — nothing is uploaded, and it works offline.
 
-/** A local file (`blob`) or a YouTube video (`youtube` = video id, streamed by the embedded player). */
-export type Track = { id: string; name: string; duration: number; added: number; blob?: Blob; youtube?: string }
+/** A local file (`data` + `mime`; older tracks kept the File as `blob`) or a YouTube video (`youtube` = id, streamed by the embedded player). */
+export type Track = { id: string; name: string; duration: number; added: number; data?: ArrayBuffer; mime?: string; blob?: Blob; youtube?: string }
+
+/** The track's audio. Stored as an ArrayBuffer because Safari's IndexedDB refuses Blobs in private windows. */
+export const audioOf = (t: Track) => t.blob ?? new Blob([t.data!], { type: t.mime })
 export type PlaylistKind = 'warmup' | 'strength' | 'cardio' | 'cooldown' | 'custom'
 export type Playlist = { id: string; name: string; kind: PlaylistKind; trackIds: string[] }
 type Store = 'tracks' | 'playlists'
@@ -46,8 +49,10 @@ export function toTrack(file: File): Promise<Track> {
     const a = new Audio()
     const done = (err?: string) => {
       URL.revokeObjectURL(url)
-      if (err) reject(new Error(`${file.name}: ${err}`))
-      else resolve({ id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), duration: a.duration || 0, added: Date.now(), blob: file })
+      if (err) return reject(new Error(`${file.name}: ${err}`))
+      file.arrayBuffer().then((data) => resolve({
+        id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), duration: a.duration || 0, added: Date.now(), data, mime: file.type,
+      }), () => reject(new Error(`${file.name}: couldn’t read the file`)))
     }
     a.preload = 'metadata'
     a.onloadedmetadata = () => done()

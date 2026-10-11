@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { estMinutes, fmtLoad, fmtTarget, fromKg, local, NEXT_DAY_KEY, SESSION_KEY, useApi, useCatalog, type ActiveSession, type Plan, type Profile } from '../api'
+import { estMinutes, fmtLoad, fmtTarget, fromKg, local, NEXT_DAY_KEY, useActiveSession, useApi, useCatalog, type Plan, type Profile } from '../api'
 import { Cover, useMusic } from '../music/Music'
 import { TimerPanel, useTimer } from '../timer/Timer'
 import { Button, Card, LinkButton } from '../ui'
@@ -24,7 +24,7 @@ export default function Dashboard({ profile }: { profile: Profile }) {
   const catalog = useCatalog()
   const music = useMusic()
   const timer = useTimer()
-  const active = local.get<ActiveSession>(SESSION_KEY)
+  const [active] = useActiveSession()
   const p = plan.data
   const resuming = !!(active && p && active.plan_id === p.id)
   const di = resuming ? active!.day : Math.min(local.get<number>(NEXT_DAY_KEY) ?? 0, (p?.days.length ?? 1) - 1)

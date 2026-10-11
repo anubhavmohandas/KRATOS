@@ -98,11 +98,11 @@ export default function MusicPage() {
             <Button busy={busy && !!link} disabled={!link.trim()}>Add</Button>
           </form>
           {ytMsg && <div className="mb-3"><Alert tone="ok">{ytMsg}</Alert></div>}
-          <label className={`mb-4 flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed border-iron-600 p-4 text-center text-sm hover:border-accent ${busy ? 'opacity-60' : ''}`}
+          <label className={`relative mb-4 flex cursor-pointer flex-col items-center gap-1 rounded-lg border border-dashed border-iron-600 p-4 text-center text-sm hover:border-accent ${busy ? 'opacity-60' : ''}`}
             onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); onFiles(e.dataTransfer.files) }}>
             <span className="font-semibold">{busy ? 'Importing…' : `Add audio files${pl ? ` to ${pl.name}` : ''}`}</span>
             <span className="text-xs text-ash">Drop files or click · MP3, M4A, WAV, OGG, FLAC (browser-dependent) · stored only in this browser</span>
-            <input type="file" accept="audio/*" multiple className="sr-only" disabled={busy} onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} />
+            <input type="file" accept="audio/*" multiple className="sr-only left-0 top-0" disabled={busy} onChange={(e) => { onFiles(e.target.files); e.target.value = '' }} />
           </label>
           {errors.map((e) => <div key={e} className="mb-2"><Alert tone="error">{e}</Alert></div>)}
 

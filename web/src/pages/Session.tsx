@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
-import { api, fmtLoad, fmtTarget, fromKg, toKg, useCatalog, type Plan, type SetLog, type Units } from '../api'
+import { api, ApiError, fmtLoad, fmtTarget, fromKg, toKg, useCatalog, type Plan, type SetLog, type Units } from '../api'
 import { createCounter, PROFILES, type CounterState } from '../vision/metrics'
 import { Alert, Button, Card, Field, Spinner, Stat } from '../ui'
 import { TimerPanel, useTimer } from '../timer/Timer'
@@ -8,7 +8,7 @@ import { TimerPanel, useTimer } from '../timer/Timer'
 const Trainer3D = lazy(() => import('../trainer/Trainer3D'))
 const PoseCamera = lazy(() => import('../vision/PoseCamera'))
 
-type Props = { plan: Plan; dayIndex: number; sessionId: number; units: Units; onExit: () => void }
+type Props = { plan: Plan; dayIndex: number; sessionId: number; units: Units; onExit: (done: boolean) => void }
 
 export default function Session({ plan, dayIndex, sessionId, units, onExit }: Props) {
   const day = plan.days[dayIndex]
@@ -20,6 +20,7 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
   const [camera, setCamera] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [done, setDone] = useState<null | { sets: number; volume: number; minutes: number; next: Plan['days'][number] | null }>(null)
   const started = useRef(Date.now())
 
@@ -29,21 +30,24 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
   const timed = item.unit === 'sec'
 
   useEffect(() => {
-    api.get<{ sets: SetLog[]; started_at: string }>(`/sessions/${sessionId}`)
+    api.get<{ sets: SetLog[]; started_at: string; completed_at: string | null }>(`/sessions/${sessionId}`)
       .then((s) => {
+        if (s.completed_at) return onExit(true) // finished on another device
         setLogs(s.sets)
         started.current = Date.parse(s.started_at)
+        setLoaded(true)
       })
-      .catch((e) => setErr(e.message))
-  }, [sessionId])
+      // Gone after a delete-all or restore: leave instead of trapping you in a workout that can't save.
+      .catch((e) => (e instanceof ApiError && e.status === 404 ? onExit(false) : setErr(e.message)))
+  }, [sessionId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Prefill from the last set of this exercise today, else the prescription.
+  // Prefill from the last set of this exercise today, else the prescription (again once a resumed workout's sets load).
   useEffect(() => {
     const last = logs.filter((l) => l.exercise_id === item.exercise_id).at(-1)
     const kg = last?.load_kg ?? item.rx?.load_kg
     setForm({ load: kg ? String(fromKg(kg, units)) : '', reps: String(last?.reps ?? item.rx?.reps ?? item.rep_max), rir: '2' })
     setCamera(false)
-  }, [idx]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [idx, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function logSet(e: FormEvent) {
     e.preventDefault()
@@ -110,7 +114,7 @@ export default function Session({ plan, dayIndex, sessionId, units, onExit }: Pr
             </ul>
           </div>
         )}
-        <Button onClick={onExit}>Back to plan</Button>
+        <Button onClick={() => onExit(true)}>Back to plan</Button>
       </Card>
     )
   }

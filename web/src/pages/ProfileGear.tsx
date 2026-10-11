@@ -165,7 +165,13 @@ function EquipmentCard({ units, location, setLocation, equip }: {
                 {summary(e) && <div className="font-mono text-xs text-ash">{summary(e)}{e.type === 'dumbbells' && ' per hand'}</div>}
               </div>
               <button aria-label={`Remove ${LABELS[e.type]}`} className="rounded px-2 py-1 text-xs text-ash hover:bg-iron-800 hover:text-ember"
-                onClick={async () => { await api.send(`/equipment/${e.id}`, 'DELETE'); equip.reload() }}>Remove</button>
+                onClick={async () => {
+                  setErr('')
+                  try {
+                    await api.send(`/equipment/${e.id}`, 'DELETE')
+                    equip.reload()
+                  } catch (x) { setErr((x as Error).message) }
+                }}>Remove</button>
             </li>
           ))}
         </ul>
@@ -263,9 +269,9 @@ export function DataCard() {
         <p className="mb-4 text-sm text-ash">A verified snapshot is taken every day and before a delete or restore; the last 14 are kept on the server. Download one now and then so a copy survives losing the server.</p>
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <a href="/api/backup" download className="inline-flex items-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-iron-950 hover:bg-accent-hi">Download backup</a>
-          <label className="cursor-pointer text-sm text-ash underline hover:text-bone">
+          <label className="relative cursor-pointer text-sm text-ash underline hover:text-bone">
             Restore from a file…
-            <input type="file" accept=".db,application/vnd.sqlite3,application/octet-stream" className="sr-only" disabled={!!busy} onChange={(e) => {
+            <input type="file" accept=".db,application/vnd.sqlite3,application/octet-stream" className="sr-only left-0 top-0" disabled={!!busy} onChange={(e) => {
               const f = e.target.files?.[0]
               e.target.value = ''
               if (!f) return

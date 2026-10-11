@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, local, useApi, type Profile } from '../api'
 import { Alert, Button, PageHead } from '../ui'
 import ProfileAndGear from './ProfileGear'
+import { Link } from '../router'
 
 type Msg = { role: 'user' | 'assistant'; content: string }
 const KEY = 'kratos.coach'
@@ -16,7 +17,7 @@ export default function Coach({ profile, onSaved }: { profile: Profile | null; o
   return (
     <>
       <PageHead kicker={profile ? 'Profile' : 'Welcome to KRATOS'} title={profile ? 'Goals & gear' : 'Tell me about you'} />
-      {!profile && <p className="-mt-3 mb-6 max-w-2xl text-ash">Your plan is built from this profile and the equipment you actually own. Everything stays in a local database on this machine.</p>}
+      {!profile && <p className="-mt-3 mb-6 max-w-2xl text-ash">Your plan is built from this profile and the equipment you actually own. Coming back after a wipe? <Link href="/space/settings" className="text-accent hover:underline">Restore a backup</Link> instead.</p>}
       <ProfileAndGear onSaved={onSaved} />
     </>
   )
@@ -33,6 +34,7 @@ export function CoachChat() {
   const ai = health.data?.ai
   const launcher = useRef<HTMLButtonElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
+  const closeBtn = useRef<HTMLButtonElement>(null)
   const list = useRef<HTMLOListElement>(null)
 
   async function send(content: string) {
@@ -62,7 +64,15 @@ export function CoachChat() {
     launcher.current?.focus()
   }
 
-  useEffect(() => { if (open) input.current?.focus() }, [open])
+  // Focus moves into the chat (the close button when AI is off and the box is disabled); Esc closes it from anywhere.
+  useEffect(() => {
+    if (!open) return
+    input.current?.focus()
+    if (document.activeElement !== input.current) closeBtn.current?.focus()
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && close()
+    addEventListener('keydown', esc)
+    return () => removeEventListener('keydown', esc)
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // A new reply opens at its first line; your message and the typing dots pin to the bottom.
   useEffect(() => {
@@ -75,7 +85,7 @@ export function CoachChat() {
   return (
     <>
       {open && (
-        <section role="dialog" aria-label="Ask KRATOS" onKeyDown={(e) => e.key === 'Escape' && close()}
+        <section role="dialog" aria-label="Ask KRATOS"
           className="fixed inset-2 z-50 flex flex-col overflow-hidden rounded-xl border border-iron-700 bg-iron-950 shadow-2xl shadow-black lg:inset-auto lg:bottom-24 lg:right-6 lg:h-[min(36rem,calc(100dvh-8rem))] lg:w-96">
           <header className="flex items-center gap-3 border-b border-iron-800 bg-iron-900 px-4 py-3">
             <Avatar />
@@ -84,7 +94,7 @@ export function CoachChat() {
               <p className="truncate text-[11px] text-ash">{ai ? health.data?.model : 'AI not configured'}</p>
             </div>
             {msgs.length > 0 && <button className="text-xs text-ash hover:text-bone" onClick={() => { setMsgs([]); local.set(KEY, null) }}>Clear</button>}
-            <button className="grid size-8 place-items-center rounded-md text-ash hover:bg-iron-800 hover:text-bone" aria-label="Close chat" onClick={close}><Svg d="M6 6l12 12M18 6L6 18" /></button>
+            <button ref={closeBtn} className="grid size-8 place-items-center rounded-md text-ash hover:bg-iron-800 hover:text-bone" aria-label="Close chat" onClick={close}><Svg d="M6 6l12 12M18 6L6 18" /></button>
           </header>
 
           <ol ref={list} className="relative flex-1 space-y-4 overflow-y-auto overscroll-contain p-4" aria-live="polite" aria-label="Conversation">

@@ -129,6 +129,23 @@ export const local = {
 }
 export type ActiveSession = { id: number; plan_id: number; day: number }
 export const SESSION_KEY = 'kratos.session'
+
+/** The workout in progress: this browser's, else one left unfinished in the last 12 h on any device. */
+export function useActiveSession() {
+  const [active, setActive] = useState<ActiveSession | null>(() => local.get(SESSION_KEY))
+  const set = (a: ActiveSession | null) => {
+    local.set(SESSION_KEY, a)
+    setActive(a)
+  }
+  useEffect(() => {
+    if (active) return
+    let live = true
+    api.get<{ id: number; plan_id: number; day_index: number } | null>('/sessions/open')
+      .then((s) => { if (live && s) set({ id: s.id, plan_id: s.plan_id, day: s.day_index }) }, () => {})
+    return () => { live = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  return [active, set] as const
+}
 export const NEXT_DAY_KEY = 'kratos.nextDay'
 /** Same budget the engine uses: 5 min warm-up + sets × (40 s work + rest) + 1 min setup per exercise. */
 export const estMinutes = (d: PlanDay) => Math.round((300 + d.items.reduce((s, i) => s + i.sets * (40 + i.rest_seconds) + 60, 0)) / 60)
