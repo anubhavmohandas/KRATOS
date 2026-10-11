@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import sqlite3
 import threading
 import time
@@ -18,9 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import AfterValidator, BaseModel, Field, field_validator, model_validator
 
 import ai
@@ -66,19 +66,48 @@ with db() as c:
 threading.Thread(target=backup.run_daily, daemon=True).start()
 
 app = FastAPI(title="KRATOS", docs_url="/api/docs", openapi_url="/api/openapi.json")
-# Reject DNS-rebinding requests that arrive with a Host header we don't serve.
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=os.getenv("KRATOS_HOSTS", "localhost,127.0.0.1").split(","))
 
 
 # ---- access: one password gates pages, /api and /api/docs ---------------------------
-# The session cookie is an expiry signed with a key derived from the password, so changing the
-# password logs every device out. scrypt makes a leaked cookie slow to brute-force offline.
-SESSION_KEY = hashlib.scrypt(PASSWORD.encode(), salt=b"kratos-session", n=2**14, r=8, p=1)
+# The session cookie is an expiry signed with a key derived from the password and a random epoch.
+# Changing the password, or "Log out everywhere" (a new epoch), ends every session. The epoch file
+# sits beside the DB, not in it, so restoring a backup can't revive old sessions. scrypt makes a
+# leaked cookie slow to brute-force offline.
+PASSWORD_KEY = hashlib.scrypt(PASSWORD.encode(), salt=b"kratos-session", n=2**14, r=8, p=1)
+EPOCH = DB_PATH.with_name("session-epoch")
+SESSION_KEY = b""
+
+
+def load_epoch(rotate: bool = False) -> None:
+    global SESSION_KEY
+    if rotate or not EPOCH.exists():
+        EPOCH.write_text(secrets.token_hex(16))
+    SESSION_KEY = hmac.new(PASSWORD_KEY, EPOCH.read_text().encode(), "sha256").digest()
+
+
+load_epoch()
 COOKIE, SESSION_SECONDS = "kratos_session", 30 * 86400
 # Browsers fetch the manifest without cookies; the host's health probe has none either.
-PUBLIC = {"/login", "/healthz", "/manifest.webmanifest", "/icon.svg"}
-# occam: global throttle (10 failures/min), so an attacker can also lock the login out; go per-IP if that bites.
-FAILS: deque[float] = deque(maxlen=10)
+PUBLIC = {"/login", "/healthz", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"}
+# Host headers we serve (blocks DNS rebinding). The host's health probe may use an internal address.
+HOSTS = set(os.getenv("KRATOS_HOSTS", "localhost,127.0.0.1").split(","))
+# 10 failed logins a minute lock out that address; 100 a minute from anywhere lock out everyone, so a
+# botnet can't guess in parallel. Behind a proxy, uvicorn --proxy-headers supplies the real client IP.
+FAILS: dict[str, deque[float]] = {}
+ALL_FAILS: deque[float] = deque(maxlen=100)
+
+# Same-origin everything except fonts, the pose model and YouTube's player. MediaPipe runs WebAssembly.
+CSP = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com; "
+       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+       "img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; connect-src 'self' https://storage.googleapis.com; "
+       "frame-src https://www.youtube.com https://www.youtube-nocookie.com; worker-src 'self' blob:; "
+       "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",  # YouTube's embed refuses to play without the origin
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=(), payment=()",
+}
 
 
 def sign(exp: str) -> str:
@@ -90,13 +119,38 @@ def logged_in(token: str | None) -> bool:
     return hmac.compare_digest(sig.encode(), sign(exp).encode()) and int(exp) > time.time()  # signature first: exp is ours
 
 
-@app.middleware("http")
-async def require_login(request: Request, call_next):
-    if request.url.path in PUBLIC or logged_in(request.cookies.get(COOKIE)):
+def locked(d: deque[float]) -> bool:
+    return len(d) == d.maxlen and time.monotonic() - d[0] < 60
+
+
+async def gate(request: Request, call_next):
+    path = request.url.path
+    if path != "/healthz" and "*" not in HOSTS and request.headers.get("host", "").rsplit(":", 1)[0] not in HOSTS:
+        return PlainTextResponse("Invalid host header", 400)
+    # Cross-site writes are refused outright; SameSite=Lax already keeps the cookie off most of them.
+    origin = request.headers.get("origin")
+    if request.method not in ("GET", "HEAD", "OPTIONS") and origin and urllib.parse.urlsplit(origin).netloc != request.headers.get("host"):
+        return JSONResponse({"detail": "Cross-site request refused."}, 403)
+    if path == "/login" and request.method == "POST":
+        size = request.headers.get("content-length", "")
+        if not (size.isdigit() and int(size) <= 2048):  # the form is parsed before any check; keep it tiny
+            return PlainTextResponse("Request too large.", 413)
+    if path in PUBLIC or logged_in(request.cookies.get(COOKIE)):
         return await call_next(request)
-    if request.url.path.startswith("/api"):
+    if path.startswith("/api"):
         return JSONResponse({"detail": "Log in first."}, 401)
     return RedirectResponse("/login", 303)
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    r = await gate(request, call_next)
+    r.headers.update(SECURITY_HEADERS)
+    if request.url.path != "/api/docs":  # Swagger UI runs inline scripts from a CDN
+        r.headers["Content-Security-Policy"] = CSP
+    if request.url.scheme == "https":
+        r.headers["Strict-Transport-Security"] = "max-age=31536000"
+    return r
 
 
 LOGIN_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -117,10 +171,14 @@ def login_page():
 
 @app.post("/login", include_in_schema=False)
 async def login(request: Request, password: str = Form("")):
-    if len(FAILS) == FAILS.maxlen and time.monotonic() - FAILS[0] < 60:
+    ip = request.client.host if request.client else "?"
+    if locked(FAILS.get(ip, deque())) or locked(ALL_FAILS):
         return HTMLResponse(LOGIN_PAGE.replace("<!--error-->", "<p role=alert>Too many attempts. Wait a minute.</p>"), 429)
     if not hmac.compare_digest(password.encode(), PASSWORD.encode()):
-        FAILS.append(time.monotonic())
+        if len(FAILS) > 10_000:  # spoofed addresses can't grow this without bound
+            FAILS.clear()
+        FAILS.setdefault(ip, deque(maxlen=10)).append(time.monotonic())
+        ALL_FAILS.append(time.monotonic())
         return HTMLResponse(LOGIN_PAGE.replace("<!--error-->", "<p role=alert>Wrong password.</p>"), 401)
     exp = str(int(time.time()) + SESSION_SECONDS)
     r = RedirectResponse("/", 303)
@@ -133,6 +191,15 @@ async def login(request: Request, password: str = Form("")):
 @app.get("/logout", include_in_schema=False)
 def logout():
     r = RedirectResponse("/login", 303)
+    r.delete_cookie(COOKIE)
+    return r
+
+
+@app.post("/api/logout-everywhere", status_code=204)
+def logout_everywhere():
+    """A lost phone: every device, this one included, has to log in again."""
+    load_epoch(rotate=True)
+    r = Response(status_code=204)
     r.delete_cookie(COOKIE)
     return r
 
@@ -184,6 +251,17 @@ def _known_exercise(v: str) -> str:
 ExerciseId = Annotated[str, AfterValidator(_known_exercise)]
 
 
+def _text(v: str) -> str:
+    """Free text is stored and shown back (React escapes it); refuse blanks and control characters."""
+    v = v.strip()
+    if not v or any(ord(ch) < 32 and ch not in "\n\t" or ch == "\x7f" for ch in v):
+        raise ValueError("must be plain, non-blank text")
+    return v
+
+
+Text = Annotated[str, AfterValidator(_text)]
+
+
 class PlanItem(BaseModel):
     exercise_id: ExerciseId
     sets: int = Field(ge=1, le=10)
@@ -200,20 +278,20 @@ class PlanItem(BaseModel):
 
 
 class PlanDay(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
-    focus: str = Field(default="custom", max_length=20)
+    name: Text = Field(min_length=1, max_length=40)
+    focus: Text = Field(default="custom", max_length=20)
     items: list[PlanItem] = Field(min_length=1, max_length=15)
 
 
 class PlanIn(BaseModel):
     days: list[PlanDay] = Field(min_length=1, max_length=7)
-    split: str = Field(default="Imported", min_length=1, max_length=60)
+    split: Text = Field(default="Imported", min_length=1, max_length=60)
     source: Literal["import", "edited"] = "import"
 
 
 class ChatMsg(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=2000)
+    content: Text = Field(min_length=1, max_length=2000)
 
 
 class CoachIn(BaseModel):

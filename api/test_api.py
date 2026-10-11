@@ -34,10 +34,10 @@ def run(tmp: Path) -> None:
         time.sleep(0.05)
     opener = urllib.request.build_opener(NoRedirect)
 
-    def call(path: str, cookie: str = "", password: str | None = None):
-        form = None if password is None else urllib.parse.urlencode({"password": password}).encode()
+    def call(path: str, cookie: str = "", password: str | None = None, headers: dict | None = None, data: bytes | None = None):
+        form = data if password is None else urllib.parse.urlencode({"password": password}).encode()
         try:
-            with opener.open(urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=form, headers={"Cookie": cookie})) as r:
+            with opener.open(urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=form, headers={"Cookie": cookie, **(headers or {})})) as r:
                 return r.status, r.headers
         except urllib.error.HTTPError as e:
             return e.code, e.headers
@@ -49,6 +49,12 @@ def run(tmp: Path) -> None:
     assert call("/login")[0] == 200
     assert call("/manifest.webmanifest")[0] not in (303, 401), "the manifest stays public so the PWA installs"
     assert call("/healthz")[0] == 200, "the host's health probe needs no login"
+    h = call("/login")[1]
+    assert "frame-ancestors 'none'" in h["Content-Security-Policy"] and h["X-Frame-Options"] == "DENY", "security headers on pages"
+    assert call("/api/profile")[1]["X-Content-Type-Options"] == "nosniff", "…and on refusals"
+    assert call("/login", headers={"Host": "evil.example"})[0] == 400, "a foreign Host header is refused (DNS rebinding)"
+    assert call("/healthz", headers={"Host": "10.0.0.7:8000"})[0] == 200, "the probe works from the host's internal address"
+    assert call("/login", password="x" * 3000)[0] == 413, "an oversized login body is refused before parsing"
 
     assert call("/login", password="wrong")[0] == 401
     status, h = call("/login", password=PW)
@@ -56,6 +62,9 @@ def run(tmp: Path) -> None:
     cookie = h["Set-Cookie"].split(";")[0]
     assert call("/api/profile", cookie)[0] == 200
     assert call("/api/docs", cookie)[0] == 200
+    evil = {"Origin": "https://evil.example"}
+    assert call("/api/plans/generate", cookie, headers=evil, data=b"")[0] == 403, "a cross-site write is refused"
+    assert call("/api/plans/generate", cookie, headers={"Origin": f"http://127.0.0.1:{port}"}, data=b"")[0] == 409, "same-origin passes"
 
     def api(method: str, path: str, body=None, data: bytes | None = None, ctype: str = "application/json"):
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api{path}", method=method,
@@ -73,6 +82,11 @@ def run(tmp: Path) -> None:
     assert api("POST", "/equipment", {"type": "dumbbells", "weights_kg": [5, 10, 15]})[0] == 201
     status, plan = api("POST", "/plans/generate")
     assert status == 201 and plan["days"][0]["items"], plan
+    item = {"exercise_id": "pushup", "sets": 3, "rep_min": 8, "rep_max": 12, "rest_seconds": 60}
+    for name in ("Day\x00one", "   ", "x" * 41):
+        assert api("POST", "/plans", {"days": [{"name": name, "items": [item]}]})[0] == 422, f"plan day name {name!r} accepted"
+    assert api("POST", "/plans", {"days": [{"name": "  Day one ", "items": [item]}]})[1]["days"][0]["name"] == "Day one"
+    assert api("POST", f"/plans/{plan['id']}/activate")[0] == 200
     status, body = api("POST", f"/plans/{plan['id']}/explain")
     assert status == 502 and "Everything else" in body["detail"], "AI down → a clear 502, not a 500"
 
@@ -107,13 +121,19 @@ def run(tmp: Path) -> None:
     for _ in range(9):  # 10 failures in a minute, counting the one above
         call("/login", password="wrong")
     assert call("/login", password=PW)[0] == 429, "login is throttled after 10 failures a minute"
+    status, h = call("/login", password=PW, headers={"X-Forwarded-For": "203.0.113.9"})
+    assert status == 303, "another address isn't locked out by someone else's failures"
+    phone = h["Set-Cookie"].split(";")[0]
+    assert call("/api/profile", phone)[0] == 200
+    assert call("/api/logout-everywhere", cookie, data=b"")[0] == 204
+    assert call("/api/profile", phone)[0] == 401 and call("/api/profile", cookie)[0] == 401, "log out everywhere ends every session"
 
     deadline = time.time() + 5
     while not list((tmp / "backups").glob("kratos-*.db")):
         assert time.time() < deadline, "no backup taken at startup"
         time.sleep(0.1)
     server.should_exit = True
-    print("api ok: every route gated, login/logout, forged/expired cookies refused, throttle, startup backup, "
+    print("api ok: every route gated, security headers, host/origin/body-size checks, login/logout/log-out-everywhere, forged/expired cookies refused, per-address throttle, startup backup, "
           "journey (plan, set retry/undo/resume, finish, progress, corrupt PDF, delete-all) with the AI down")
 
 

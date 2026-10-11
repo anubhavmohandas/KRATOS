@@ -213,7 +213,7 @@ function RepCounter({ track, onUse, onStop }: { track: string; onUse: (n: number
       <Suspense fallback={<Spinner />}>
         <PoseCamera onStop={onStop} onFrame={({ lm, width, height }) => {
           counter.current ??= createCounter(p, width / height)
-          setS(counter.current(lm))
+          setS(counter.current(lm, performance.now()))
         }} />
       </Suspense>
       <div className="flex items-center gap-4 rounded-xl border border-iron-700 bg-iron-900 p-4">
@@ -230,7 +230,7 @@ function RepCounter({ track, onUse, onStop }: { track: string; onUse: (n: number
           <Button variant="ghost" onClick={() => { counter.current = null; setS(null) }}>Reset</Button>
         </div>
       </div>
-      <p className="text-[11px] text-ash/80">Film from the side, whole body in frame. The count fills the reps box only when you press Use — check it before logging.</p>
+      <p className="text-[11px] text-ash/80">Film side-on, whole body in frame. Only full, controlled reps with the whole body moving count. The count fills the reps box only when you press Use.</p>
     </div>
   )
 }

@@ -19,64 +19,150 @@ export function angle(a: Pt, b: Pt, c: Pt): number {
 
 // ---- rep counting -------------------------------------------------------------
 
+/** One side of the body, y pointing up. `u` = torso length when the rep started, the unit for distances. */
+type Body = { s: Pt; e: Pt; w: Pt; h: Pt; u: number }
+/**
+ * What the rest of the body must do for a joint-angle rep to count — this is what stops a bent knee or a
+ * waved arm passing for a squat or a push-up. `move` = signed change from the rep's start that must be reached;
+ * `min`/`max` = bounds held for the whole rep.
+ */
+type Gate = { m: (b: Body) => number; move?: number; min?: number; max?: number; fail: string }
+
 /** A rep = leave the start zone, reach the end zone, come back. `start` says which end of the angle range you start at. */
-export type RepProfile = { joints: [Triple, Triple]; start: 'high' | 'low'; lo: number; hi: number; label: string }
+export type RepProfile = { joints: [Triple, Triple]; start: 'high' | 'low'; lo: number; hi: number; label: string; gates: Gate[] }
 
 const ELBOWS: [Triple, Triple] = [[11, 13, 15], [12, 14, 16]]
 const KNEES: [Triple, Triple] = [[23, 25, 27], [24, 26, 28]]
 const HIPS: [Triple, Triple] = [[11, 23, 25], [12, 24, 26]]
 
-// occam: fixed thresholds from typical ranges — tune here if your camera angle reads differently.
+const tilt = (b: Body) => angle({ x: b.h.x, y: b.h.y + 1 }, b.h, b.s) // torso from vertical: 0 standing, 90 lying, >90 head-down
+const height = (k: 'h' | 's') => (b: Body) => b[k].y / b.u
+const overShoulder = (k: 'e' | 'w') => (b: Body) => (b[k].y - b.s.y) / b.u
+const upperArm = (b: Body) => angle(b.h, b.s, b.e) // 0 = hanging along the torso
+
+// occam: fixed thresholds from typical ranges, filmed side-on — tune here if your camera angle reads differently.
 export const PROFILES: Record<string, RepProfile> = {
-  squat: { joints: KNEES, start: 'high', hi: 160, lo: 105, label: 'knee' },
-  hinge: { joints: HIPS, start: 'high', hi: 160, lo: 125, label: 'hip' },
-  bridge: { joints: HIPS, start: 'low', lo: 145, hi: 165, label: 'hip' },
-  pushup: { joints: ELBOWS, start: 'high', hi: 150, lo: 100, label: 'elbow' },
-  press: { joints: ELBOWS, start: 'low', lo: 100, hi: 150, label: 'elbow' },
-  curl: { joints: ELBOWS, start: 'high', hi: 140, lo: 65, label: 'elbow' },
-  row: { joints: ELBOWS, start: 'high', hi: 140, lo: 100, label: 'elbow' },
-  pullup: { joints: ELBOWS, start: 'high', hi: 145, lo: 95, label: 'elbow' },
-  triceps: { joints: ELBOWS, start: 'low', lo: 80, hi: 145, label: 'elbow' },
-  dip: { joints: ELBOWS, start: 'high', hi: 150, lo: 105, label: 'elbow' },
+  squat: { joints: KNEES, start: 'high', hi: 160, lo: 105, label: 'knee', gates: [{ m: height('h'), move: -0.2, fail: 'your hips have to drop' }] },
+  hinge: { joints: HIPS, start: 'high', hi: 160, lo: 125, label: 'hip', gates: [{ m: tilt, move: 20, fail: 'hinge — hips back, chest forward' }] },
+  bridge: {
+    joints: HIPS, start: 'low', lo: 145, hi: 165, label: 'hip',
+    gates: [{ m: tilt, min: 40, fail: 'lie back, shoulders down' }, { m: height('h'), move: 0.12, fail: 'drive your hips up' }],
+  },
+  pushup: {
+    joints: ELBOWS, start: 'high', hi: 150, lo: 100, label: 'elbow',
+    gates: [{ m: tilt, min: 40, fail: 'get into a plank' }, { m: height('s'), move: -0.12, fail: 'lower your chest, not just your elbows' }],
+  },
+  press: {
+    joints: ELBOWS, start: 'low', lo: 100, hi: 150, label: 'elbow',
+    gates: [{ m: overShoulder('w'), min: -0.15, fail: 'start with your hands at your shoulders' }, { m: overShoulder('w'), move: 0.2, fail: 'press up, not out' }],
+  },
+  curl: { joints: ELBOWS, start: 'high', hi: 140, lo: 65, label: 'elbow', gates: [{ m: upperArm, max: 50, fail: 'keep your elbows by your sides' }] },
+  row: { joints: ELBOWS, start: 'high', hi: 140, lo: 100, label: 'elbow', gates: [{ m: upperArm, move: -25, fail: 'pull your elbows back past your body' }] },
+  pullup: {
+    joints: ELBOWS, start: 'high', hi: 145, lo: 95, label: 'elbow',
+    gates: [{ m: overShoulder('w'), min: -0.3, fail: 'hands overhead' }, { m: overShoulder('w'), move: -0.25, fail: 'pull yourself up to your hands' }],
+  },
+  triceps: {
+    joints: ELBOWS, start: 'low', lo: 80, hi: 145, label: 'elbow',
+    gates: [{ m: overShoulder('e'), min: 0.1, fail: 'keep your elbows up overhead' }, { m: overShoulder('w'), move: 0.25, fail: 'extend all the way up' }],
+  },
+  dip: {
+    joints: ELBOWS, start: 'high', hi: 150, lo: 105, label: 'elbow',
+    gates: [{ m: tilt, max: 50, fail: 'stay upright' }, { m: height('s'), move: -0.12, fail: 'lower your body, not just your elbows' }],
+  },
 }
 
 export type CounterState = { reps: number; angle: number | null; phase: 'idle' | 'start' | 'end'; cue: string; visible: boolean }
 
-/** `aspect` = video width / height; MediaPipe normalises x and y separately, so x must be rescaled before measuring angles. */
+const LOST_MS = 400 // tracking gap that voids a rep in progress — longer than a blink of bad detection, shorter than stepping out and back
+const MIN_REP_MS = 500 // faster than any controlled rep: a glitch or a flail
+const SIDE_ON = 0.5 // shoulderSpan above this = not side-on, where 2D angles and heights stop meaning anything
+
+/**
+ * `aspect` = video width / height; MediaPipe normalises x and y separately, so x must be rescaled before measuring.
+ * `t` = frame time in ms.
+ */
 export function createCounter(p: RepProfile, aspect = 16 / 9) {
   let phase: CounterState['phase'] = 'idle'
   let reps = 0
-  let smooth: number | null = null
   let excursion = 0
   let cue = 'Get into the start position'
+  let side: number | null = null // locked from first sight, so a bent arm on the far side can't stand in for this one
+  let pts: Pt[] | null = null // smoothed joint triple + shoulder, elbow, wrist, hip
+  let ang: number | null = null
+  let seen = -Infinity
+  let rep = { t0: 0, u: 1, g: [] as { ref: number; lo: number; hi: number }[] }
 
-  return (lm: Lm[]): CounterState => {
-    const side = p.joints.map((j) => ({ j, v: vis(lm, j) })).sort((a, b) => b.v - a.v)[0]
-    if (!lm.length || side.v < 0.5) return { reps, angle: smooth, phase, cue: 'Step back so your whole body is in frame', visible: false }
-    const [a, b, c] = side.j.map((i) => ({ x: lm[i].x * aspect, y: lm[i].y }))
-    smooth = smooth === null ? angle(a, b, c) : smooth * 0.6 + angle(a, b, c) * 0.4
-    const atStart = p.start === 'high' ? smooth >= p.hi : smooth <= p.lo
-    const atEnd = p.start === 'high' ? smooth <= p.lo : smooth >= p.hi
-    const depth = p.start === 'high' ? p.hi - smooth : smooth - p.lo
+  return (lm: Lm[], t: number): CounterState => {
+    if (t - seen > LOST_MS) {
+      if (phase !== 'idle') cue = 'Lost you — get back into the start position'
+      phase = 'idle'
+      side = null
+      pts = null
+    }
+    const idx = (sd: number) => [...p.joints[sd], 11 + sd, 13 + sd, 15 + sd, 23 + sd]
+    const sd = side ?? (vis(lm, idx(0)) >= vis(lm, idx(1)) ? 0 : 1)
+    if (!lm.length || vis(lm, idx(sd)) < 0.5) return { reps, angle: ang, phase, cue: 'Step back so your whole body is in frame', visible: false }
+    if (shoulderSpan(lm, aspect, 1) > SIDE_ON) return { reps, angle: ang, phase, cue: 'Turn side-on to the camera', visible: false }
+    side = sd
+    seen = t
 
-    if (phase === 'idle' && atStart) {
-      phase = 'start'
-      cue = 'Go'
+    const raw = idx(sd).map((i) => ({ x: lm[i].x * aspect, y: -lm[i].y }))
+    pts = pts ? pts.map((q, i) => ({ x: q.x * 0.6 + raw[i].x * 0.4, y: q.y * 0.6 + raw[i].y * 0.4 })) : raw
+    const [a, b, c, s, e, w, h] = pts
+    ang = angle(a, b, c)
+    const atStart = p.start === 'high' ? ang >= p.hi : ang <= p.lo
+    const atEnd = p.start === 'high' ? ang <= p.lo : ang >= p.hi
+    const depth = p.start === 'high' ? p.hi - ang : ang - p.lo
+
+    const open = () => {
+      const u = Math.max(1e-6, dist(s, h))
+      rep = { t0: t, u, g: p.gates.map((g) => { const v = g.m({ s, e, w, h, u }); return { ref: v, lo: v, hi: v } }) }
+    }
+    const track = () => p.gates.forEach((g, i) => {
+      const v = g.m({ s, e, w, h, u: rep.u })
+      rep.g[i].lo = Math.min(rep.g[i].lo, v)
+      rep.g[i].hi = Math.max(rep.g[i].hi, v)
+    })
+    const fault = () => p.gates.find((g, i) => {
+      const { ref, lo, hi } = rep.g[i]
+      return (g.min != null && lo < g.min) || (g.max != null && hi > g.max) || (g.move != null && (g.move < 0 ? lo - ref > g.move : hi - ref < g.move))
+    })
+
+    if (phase === 'idle') {
+      if (atStart) {
+        phase = 'start'
+        cue = 'Go'
+        open()
+      }
     } else if (phase === 'start') {
-      if (atEnd) {
-        phase = 'end'
-        cue = 'Now back up'
-      } else if (atStart) {
+      if (atStart) {
         if (excursion > 20) cue = 'Partial rep — use the full range'
         excursion = 0
-      } else excursion = Math.max(excursion, depth)
-    } else if (phase === 'end' && atStart) {
-      phase = 'start'
-      reps += 1
-      excursion = 0
-      cue = 'Good rep'
+        open()
+      } else {
+        track()
+        if (atEnd) {
+          phase = 'end'
+          cue = 'Now back up'
+        } else excursion = Math.max(excursion, depth)
+      }
+    } else {
+      track()
+      if (atStart) {
+        phase = 'start'
+        excursion = 0
+        const f = fault()
+        if (f) cue = `Not counted — ${f.fail}`
+        else if (t - rep.t0 < MIN_REP_MS) cue = 'Not counted — too fast, control it'
+        else {
+          reps += 1
+          cue = 'Good rep'
+        }
+        open()
+      }
     }
-    return { reps, angle: smooth, phase, cue, visible: true }
+    return { reps, angle: ang, phase, cue, visible: true }
   }
 }
 

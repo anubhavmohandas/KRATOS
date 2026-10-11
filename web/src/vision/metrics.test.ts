@@ -2,27 +2,41 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { angle, createCounter, frontMetrics, median, positionCue, PROFILES, shoulderSpan, type Lm } from './metrics.ts'
 
-/** 33 landmarks with the left knee (23-25-27) bent to `deg` and everything visible. */
-function kneeAt(deg: number, visibility = 1): Lm[] {
-  const lm: Lm[] = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0.1 }))
-  const r = (deg * Math.PI) / 180
-  lm[25] = { x: 0.5, y: 0.6, visibility } // knee
-  lm[27] = { x: 0.5, y: 0.8, visibility } // ankle straight below
-  lm[23] = { x: 0.5 + 0.2 * Math.sin(r), y: 0.6 + 0.2 * Math.cos(r), visibility } // hip at `deg` from the shin
+/** Side-on figure (left and right overlap). `squat`: knee bends as the hips sink. `legCurl` (cheat): stand still, swing a heel back. */
+function knee(deg: number, { cheat = false, visibility = 1 } = {}): Lm[] {
+  const b = ((180 - deg) * Math.PI) / 180
+  const ankle = cheat ? null : { x: 0.5, y: 0.9 }
+  const kn = cheat ? { x: 0.5, y: 0.7 } : { x: 0.5 + 0.2 * Math.sin(0.4 * b), y: 0.9 - 0.2 * Math.cos(0.4 * b) }
+  const hip = cheat ? { x: 0.5, y: 0.5 } : { x: kn.x - 0.2 * Math.sin(0.6 * b), y: kn.y - 0.2 * Math.cos(0.6 * b) }
+  const sh = { x: hip.x + 0.25 * Math.sin(0.5 * b * +!cheat), y: hip.y - 0.25 * Math.cos(0.5 * b * +!cheat) }
+  return body({ 11: sh, 13: { x: sh.x, y: sh.y + 0.12 }, 15: { x: sh.x, y: sh.y + 0.24 }, 23: hip, 25: kn, 27: ankle ?? { x: kn.x - 0.2 * Math.sin(b), y: kn.y + 0.2 * Math.cos(b) } }, visibility)
+}
+
+/** Standing side-on, upper arm hanging, elbow bent to `deg` (a curl). */
+function arm(deg: number): Lm[] {
+  const b = ((180 - deg) * Math.PI) / 180
+  return body({ 11: { x: 0.5, y: 0.3 }, 13: { x: 0.5, y: 0.45 }, 15: { x: 0.5 + 0.13 * Math.sin(b), y: 0.45 + 0.13 * Math.cos(b) }, 23: { x: 0.5, y: 0.55 }, 25: { x: 0.5, y: 0.75 }, 27: { x: 0.5, y: 0.95 } })
+}
+
+function body(pts: Record<number, { x: number; y: number }>, visibility = 1): Lm[] {
+  const lm: Lm[] = Array.from({ length: 33 }, () => ({ ...pts[11], visibility }))
+  for (const [i, q] of Object.entries(pts)) lm[+i] = lm[+i + 1] = { ...q, visibility }
   return lm
 }
 
-const run = (angles: number[], vis = 1) => {
-  const count = createCounter(PROFILES.squat, 1)
-  return angles.map((a) => count(kneeAt(a, vis))).at(-1)!
+const run = (frames: Lm[][], profile = PROFILES.squat, dt = 100) => {
+  const count = createCounter(profile, 1)
+  return frames.map((f, i) => count(f, i * dt)).at(-1)!
 }
-const hold = (a: number, n = 6) => Array(n).fill(a)
+const hold = (a: number, n = 6, o = {}) => Array.from({ length: n }, () => knee(a, o))
 
 test('angle', () => {
   assert.equal(Math.round(angle({ x: 1, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 1 })), 90)
   assert.equal(Math.round(angle({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 })), 180)
-  const k = kneeAt(120)
-  assert.equal(Math.round(angle(k[23], k[25], k[27])), 120)
+  for (const cheat of [false, true]) {
+    const k = knee(120, { cheat })
+    assert.equal(Math.round(angle(k[23], k[25], k[27])), 120)
+  }
 })
 
 test('counts full reps only', () => {
@@ -38,15 +52,34 @@ test('partial rep is not counted and gets a cue', () => {
 })
 
 test('jitter around one threshold never double counts', () => {
-  const s = run([...hold(175), ...hold(90), 112, 98, 113, 99, 111, ...hold(175)])
+  const s = run([...hold(175), ...hold(90), ...[112, 98, 113, 99, 111].map((a) => knee(a)), ...hold(175)])
   assert.equal(s.reps, 1)
 })
 
 test('no reps before the start position, none while landmarks are hidden', () => {
   assert.equal(run([...hold(90), ...hold(175)]).reps, 0) // walked in already squatting
-  const hidden = run([...hold(175), ...hold(90), ...hold(175)], 0.2)
+  const hidden = run([...hold(175), ...hold(90), ...hold(175)].map((f) => f.map((l) => ({ ...l, visibility: 0.2 }))))
   assert.equal(hidden.reps, 0)
   assert.equal(hidden.visible, false)
+})
+
+test('cheats are not counted', () => {
+  const legCurl = run([...hold(175, 6, { cheat: true }), ...hold(90, 6, { cheat: true }), ...hold(175, 6, { cheat: true })])
+  assert.equal(legCurl.reps, 0) // knee bent, hips never dropped
+  assert.match(legCurl.cue, /hips/)
+  assert.match(run([...hold(175), ...hold(90), ...hold(175)], PROFILES.squat, 20).cue, /too fast/)
+  const gone = run([...hold(175), ...hold(90), ...hold(90, 6, { visibility: 0.2 }), ...hold(175)]) // stepped out at the bottom
+  assert.equal(gone.reps, 0)
+  const blink = run([...hold(175), ...hold(90), ...hold(90, 2, { visibility: 0.2 }), ...hold(175)]) // brief detection drop is fine
+  assert.equal(blink.reps, 1)
+  const front = run([...hold(175), ...hold(90), ...hold(175)].map((f) => { f[12] = { ...f[11], x: f[11].x + 0.3 }; return f }))
+  assert.equal(front.reps, 0)
+  assert.match(front.cue, /side-on/)
+
+  const curl = [...[175, 175, 175, 175, 175, 175], ...Array(6).fill(50), ...Array(6).fill(175)].map(arm)
+  assert.equal(run(curl, PROFILES.curl).reps, 1)
+  assert.match(run(curl, PROFILES.pushup).cue, /plank/) // standing arm bend ≠ push-up
+  assert.match(run(curl, PROFILES.row).cue, /elbows back/)
 })
 
 test('front metrics on a symmetric figure', () => {

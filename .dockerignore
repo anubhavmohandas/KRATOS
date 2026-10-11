@@ -7,3 +7,4 @@ web/dist
 web/public/mediapipe
 api/kratos.db*
 api/backups
+api/session-epoch

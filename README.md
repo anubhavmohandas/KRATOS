@@ -16,6 +16,13 @@ Single user, behind one password. Workouts and body data live in `api/kratos.db`
 
 Set `KRATOS_PASSWORD` (12+ characters) in `.env` first, and once per clone run `git config core.hooksPath .githooks` so a commit can never carry `.env` or an API key. The API refuses to start without it. The password guards every page and API route, `/api/docs` included.
 
+Access protection, all in `api/main.py`:
+- a signed HttpOnly 30-day cookie; **Settings → Log out everywhere** ends every session (for a lost phone)
+- 10 failed logins a minute lock out that address, and 100 a minute lock out everyone
+- foreign `Host` headers are refused, and so are cross-site writes
+- strict security headers (CSP, no framing, nosniff)
+- free-text fields refuse control characters
+
 Development with hot reload (two terminals):
 
 ```sh
