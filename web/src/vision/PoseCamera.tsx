@@ -46,11 +46,12 @@ export default function PoseCamera({ onFrame, onStop, children }: { onFrame: (f:
         const draw = new DrawingUtils(ctx)
         let lastTime = -1
         const loop = () => {
-          if (stopped) return
+          // On unmount React detaches the ref at once but runs this effect's cleanup after paint; a frame can land between.
+          const c = canvas.current
+          if (stopped || !c) return
           if (v.readyState >= 2 && v.currentTime !== lastTime) {
             lastTime = v.currentTime
             const res = pose.detectForVideo(v, performance.now())
-            const c = canvas.current!
             if (c.width !== v.videoWidth) Object.assign(c, { width: v.videoWidth, height: v.videoHeight })
             ctx.clearRect(0, 0, c.width, c.height)
             const lm = res.landmarks[0] ?? []

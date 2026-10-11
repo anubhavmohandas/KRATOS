@@ -6,9 +6,12 @@ export const PASSWORD = 'e2e-password-1234'
 export const test = base.extend<{ problems: string[] }>({
   problems: [async ({ page }, use) => {
     const problems: string[] = []
+    // --mute-audio doesn't reach macOS's system speech, so the body-scan voice cues would talk out loud during a run.
+    await page.addInitScript(() => { if (globalThis.speechSynthesis) speechSynthesis.speak = () => {} })
     // WebKit words a same-origin fetch cancelled by navigating away as an "access control" failure; nothing failed.
     page.on('pageerror', (e) => { if (!/due to access control checks\.$/.test(e.message)) problems.push(`page error: ${e.message}`) })
-    page.on('console', (m) => { if (/Refused to|Content Security Policy/i.test(m.text())) problems.push(`CSP: ${m.text()}`) })
+    // MediaPipe's usage telemetry is meant to be blocked (see CSP in api/main.py).
+    page.on('console', (m) => { if (/Refused to|Content Security Policy/i.test(m.text()) && !m.text().includes('odml.pa.googleapis.com')) problems.push(`CSP: ${m.text()}`) })
     await use(problems)
     expect(problems, 'browser errors or CSP violations').toEqual([])
   }, { auto: true }],

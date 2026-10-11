@@ -116,14 +116,25 @@ test('music: your files play, persist, and deleting the playing one stops it', a
   await expect(page.getByRole('button', { name: 'Play tone-b' })).toBeVisible()
 })
 
-test('camera: body scan and rep counter start, load the pose model, and stop', async ({ page, browserName }) => {
+test('camera: a full body scan measures the person in frame; the rep counter starts and stops', async ({ page, browserName }) => {
   test.skip(browserName === 'webkit', 'Playwright WebKit has no fake camera; check on a real iPhone')
+  test.setTimeout(150_000)
   await fresh(page)
   await seed(page)
   await page.goto('/body')
   await page.getByRole('button', { name: 'Start scan' }).click()
   await expect(page.getByText('Camera on · processed on this device')).toBeVisible({ timeout: 60_000 })
   await expect(page.getByText('Step 1 · Face the camera')).toBeVisible()
+  // Pose found → position cues → auto countdown → front capture → side capture → results.
+  await expect(page.getByRole('button', { name: 'Save results' })).toBeVisible({ timeout: 90_000 })
+  const confidence = await page.getByText('Landmark confidence').locator('xpath=following-sibling::dd').textContent()
+  expect(parseInt(confidence!), 'MediaPipe saw a body').toBeGreaterThanOrEqual(75)
+  await expect(page.getByText(/Shoulder joint width \(est\.\)/)).toBeVisible()
+  await page.getByRole('button', { name: 'Save results' }).click()
+  await expect(page.getByRole('cell', { name: 'camera' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Start scan' }).click()
+  await expect(page.getByText('Camera on · processed on this device')).toBeVisible({ timeout: 60_000 })
   await page.getByRole('button', { name: 'Stop camera' }).click()
   await expect(page.getByRole('button', { name: 'Start scan' })).toBeVisible()
 

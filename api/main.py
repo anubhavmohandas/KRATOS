@@ -102,7 +102,8 @@ HOSTS = set(os.getenv("KRATOS_HOSTS", "localhost,127.0.0.1").split(","))
 FAILS: dict[str, deque[float]] = {}
 ALL_FAILS: deque[float] = deque(maxlen=100)
 
-# Same-origin everything except fonts, the pose model and YouTube's player. MediaPipe runs WebAssembly.
+# Same-origin everything except fonts, the pose model and YouTube's player. MediaPipe runs WebAssembly. Its usage
+# telemetry (odml.pa.googleapis.com) is blocked on purpose: camera work stays on the device.
 CSP = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com; "
        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
        "img-src 'self' data: blob: https://i.ytimg.com; media-src 'self' blob:; connect-src 'self' https://storage.googleapis.com; "

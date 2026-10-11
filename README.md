@@ -123,6 +123,14 @@ cd web && npx playwright install chromium webkit && npm run e2e   # first time; 
 
 `npm test` covers the rep counter, body metrics, scan positioning cues, timer maths, and that every exercise has its own 3D animation.
 
+## Device checks
+
+`npm run e2e` drives the real app in desktop Chrome, a Pixel 7 profile and an iPhone 15 profile (WebKit). For the camera, Chrome's fake webcam plays a clip of KRATOS's own 3D mannequin, 10 s facing the camera and 10 s side-on (`web/e2e/fixtures`). MediaPipe reads it as a person, so the body scan runs for real: position cues, auto countdown, front and side capture, results, save. The 3D demo is checked for drawing and animating, and music for playing and persisting. CSP is enforced throughout. MediaPipe's attempt to send usage telemetry to Google is blocked on purpose.
+
+What only a real phone can confirm, once it's on HTTPS:
+- [ ] **iPhone (Safari and the home-screen app):** the camera prompt and front camera; spoken scan cues are audible; a real squat is counted after the live check; touch rotates the 3D demo; music keeps playing with the screen locked and shows lock-screen controls; the YouTube player plays inline.
+- [ ] **Android (Chrome, installed app):** the same, plus timer vibration (iOS has no vibration API).
+
 ## Honest limits
 
 - **Body metrics are estimates:** joint-centre widths calibrated from your height, ratios and tilt. There's no body-fat %, because a webcam can't measure it reliably.

@@ -1,11 +1,21 @@
+import { readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 import { defineConfig, devices } from '@playwright/test'
 
 // End-to-end against the real thing: the built UI served by the API, on a throwaway DB, AI off.
 // `npm run e2e` builds first. Projects share one server, so they run one after another.
-const PORT = 8765
-const camera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required']
-const video = process.env.KRATOS_FAKE_VIDEO // a .y4m of a person; without it the fake camera shows a test pattern
-if (video) camera.push(`--use-file-for-fake-video-capture=${video}`)
+const PORT = +(process.env.KRATOS_E2E_PORT ?? 8765) // another port lets two runs share a machine
+
+// Chrome's fake camera films the app's own 3D mannequin, which MediaPipe reads as a person: 10 s facing the camera,
+// then 10 s side-on, looping — enough for a body scan's front and side captures.
+const still = (name: string) => gunzipSync(readFileSync(join(import.meta.dirname, 'e2e/fixtures', `mannequin-${name}.yuv.gz`)))
+const person = join(tmpdir(), 'kratos-mannequin.y4m')
+const frames = [...Array(100).fill(still('front')), ...Array(100).fill(still('side'))]
+writeFileSync(person, Buffer.concat([Buffer.from('YUV4MPEG2 W480 H270 F10:1 Ip A1:1 C420jpeg\n'), ...frames.flatMap((f) => [Buffer.from('FRAME\n'), f])]))
+const camera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${person}`,
+  '--autoplay-policy=no-user-gesture-required']
 
 export default defineConfig({
   testDir: 'e2e',
