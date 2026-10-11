@@ -72,45 +72,88 @@ export const PROFILES: Record<string, RepProfile> = {
   },
 }
 
-export type CounterState = { reps: number; angle: number | null; phase: 'idle' | 'start' | 'end'; cue: string; visible: boolean }
+export type CounterState = { reps: number; angle: number | null; phase: 'check' | 'idle' | 'start' | 'end'; cue: string; visible: boolean }
 
-const LOST_MS = 400 // tracking gap that voids a rep in progress — longer than a blink of bad detection, shorter than stepping out and back
+const LOST_MS = 400 // tracking gap that voids the rep and the live check — longer than a detection flicker, shorter than stepping out and back
 const MIN_REP_MS = 500 // faster than any controlled rep: a glitch or a flail
 const SIDE_ON = 0.5 // shoulderSpan above this = not side-on, where 2D angles and heights stop meaning anything
+const CUE_WAIT = [800, 2000] // random wait before each live-check cue, ms — a replayed video can't know when it comes
+const CUE_MS = 2000 // time to answer a cue: reaction plus moving the arm
+// occam: a cut to another picture shows up as the torso teleporting or resizing between frames — fixed limits, tune if real moves trip it.
+const JUMP = (dtMs: number) => 0.4 + (10 * dtMs) / 1000 // torso lengths a shoulder or hip may move between two frames
+const RESIZE = 0.3
 
 /**
+ * Starts with a live check — arm up, down, up, down, each on a cue at a random moment — so a replayed video can't
+ * count; losing tracking or the picture jumping repeats it.
  * `aspect` = video width / height; MediaPipe normalises x and y separately, so x must be rescaled before measuring.
  * `t` = frame time in ms.
  */
-export function createCounter(p: RepProfile, aspect = 16 / 9) {
-  let phase: CounterState['phase'] = 'idle'
+export function createCounter(p: RepProfile, aspect = 16 / 9, rand = Math.random) {
+  let phase: CounterState['phase'] = 'check'
+  let check = { step: 0, at: 0 } // step 0 = waiting for arms down; 1–4 = up, down, up, down, each due on a cue at `at`
   let reps = 0
   let excursion = 0
-  let cue = 'Get into the start position'
+  let cue = 'Live check: stand side-on, arms down'
   let side: number | null = null // locked from first sight, so a bent arm on the far side can't stand in for this one
   let pts: Pt[] | null = null // smoothed joint triple + shoulder, elbow, wrist, hip
+  let last: { s: Pt; h: Pt; u: number; t: number } | null = null // raw torso on the previous frame
   let ang: number | null = null
   let seen = -Infinity
   let rep = { t0: 0, u: 1, g: [] as { ref: number; lo: number; hi: number }[] }
 
+  const recheck = (why?: string) => {
+    phase = 'check'
+    check = { step: 0, at: 0 }
+    side = null
+    pts = null
+    last = null
+    if (why) cue = `${why} — arms down to redo the live check`
+  }
+  const due = (t: number) => t + CUE_WAIT[0] + rand() * (CUE_WAIT[1] - CUE_WAIT[0])
+
   return (lm: Lm[], t: number): CounterState => {
-    if (t - seen > LOST_MS) {
-      if (phase !== 'idle') cue = 'Lost you — get back into the start position'
-      phase = 'idle'
-      side = null
-      pts = null
-    }
+    if (t - seen > LOST_MS) recheck(phase !== 'check' || check.step ? 'Lost you' : undefined)
     const idx = (sd: number) => [...p.joints[sd], 11 + sd, 13 + sd, 15 + sd, 23 + sd]
     const sd = side ?? (vis(lm, idx(0)) >= vis(lm, idx(1)) ? 0 : 1)
     if (!lm.length || vis(lm, idx(sd)) < 0.5) return { reps, angle: ang, phase, cue: 'Step back so your whole body is in frame', visible: false }
     if (shoulderSpan(lm, aspect, 1) > SIDE_ON) return { reps, angle: ang, phase, cue: 'Turn side-on to the camera', visible: false }
-    side = sd
-    seen = t
 
     const raw = idx(sd).map((i) => ({ x: lm[i].x * aspect, y: -lm[i].y }))
+    const u = Math.max(1e-6, dist(raw[3], raw[6]))
+    if (last && (Math.max(dist(raw[3], last.s), dist(raw[6], last.h)) > JUMP(t - last.t) * u || Math.abs(u / last.u - 1) > RESIZE)) recheck('Camera view jumped')
+    side = sd
+    seen = t
+    last = { s: raw[3], h: raw[6], u, t }
     pts = pts ? pts.map((q, i) => ({ x: q.x * 0.6 + raw[i].x * 0.4, y: q.y * 0.6 + raw[i].y * 0.4 })) : raw
     const [a, b, c, s, e, w, h] = pts
     ang = angle(a, b, c)
+
+    if (phase === 'check') {
+      // Either wrist: up = well above the head, down = below the shoulder; in between counts as neither.
+      const ys = [15, 16].filter((i) => (lm[i].visibility ?? 0) >= 0.5).map((i) => (-lm[i].y - raw[3].y) / u)
+      const hand = !ys.length ? null : ys.some((y) => y > 0.7) ? 'up' : ys.every((y) => y < 0) ? 'down' : null
+      const want = check.step % 2 ? 'up' : 'down'
+      if (!check.step) {
+        if (hand === 'down') {
+          check = { step: 1, at: due(t) }
+          cue = 'Live check — wait for it…'
+        }
+      } else if (t < check.at) {
+        if (hand === want) recheck('Moved before the cue')
+      } else if (hand === want) {
+        if (check.step === 4) {
+          phase = 'idle'
+          cue = 'Verified — get into the start position'
+        } else {
+          check = { step: check.step + 1, at: due(t) }
+          cue = 'Live check — wait for it…'
+        }
+      } else if (t - check.at > CUE_MS) recheck('Too slow')
+      else cue = want === 'up' ? 'Arm straight up — now!' : 'Arm down — now!'
+      return { reps, angle: ang, phase, cue, visible: true }
+    }
+
     const atStart = p.start === 'high' ? ang >= p.hi : ang <= p.lo
     const atEnd = p.start === 'high' ? ang <= p.lo : ang >= p.hi
     const depth = p.start === 'high' ? p.hi - ang : ang - p.lo

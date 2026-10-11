@@ -24,10 +24,20 @@ function body(pts: Record<number, { x: number; y: number }>, visibility = 1): Lm
   return lm
 }
 
-const run = (frames: Lm[][], profile = PROFILES.squat, dt = 100) => {
-  const count = createCounter(profile, 1)
+/** Same pose with a wrist straight up above the head. */
+const raise = (f: Lm[]) => {
+  const lm = f.map((l) => ({ ...l }))
+  lm[15] = lm[16] = { ...lm[11], y: lm[11].y - 0.25 }
+  return lm
+}
+/** Passes the live check holding pose `f`: down, then up/down/up/down a second apart (cues come 800 ms in, rand = 0). */
+const live = (f: Lm[], n: number) => [...[0, 1, 0, 1].flatMap((up) => Array.from({ length: n }, () => (up ? raise(f) : f))), f]
+
+const feed = (frames: Lm[][], profile = PROFILES.squat, dt = 100) => {
+  const count = createCounter(profile, 1, () => 0)
   return frames.map((f, i) => count(f, i * dt)).at(-1)!
 }
+const run = (frames: Lm[][], profile = PROFILES.squat, dt = 100) => feed([...live(frames[0], 1000 / dt), ...frames], profile, dt)
 const hold = (a: number, n = 6, o = {}) => Array.from({ length: n }, () => knee(a, o))
 
 test('angle', () => {
@@ -67,12 +77,13 @@ test('cheats are not counted', () => {
   const legCurl = run([...hold(175, 6, { cheat: true }), ...hold(90, 6, { cheat: true }), ...hold(175, 6, { cheat: true })])
   assert.equal(legCurl.reps, 0) // knee bent, hips never dropped
   assert.match(legCurl.cue, /hips/)
-  assert.match(run([...hold(175), ...hold(90), ...hold(175)], PROFILES.squat, 20).cue, /too fast/)
+  const ramp = (a: number, b: number) => Array.from({ length: 6 }, (_, i) => knee(a + ((b - a) * (i + 1)) / 6))
+  assert.match(run([...hold(175), ...ramp(175, 90), ...hold(90, 3), ...ramp(90, 175), ...hold(175)], PROFILES.squat, 25).cue, /too fast/) // ~0.4 s rep
   const gone = run([...hold(175), ...hold(90), ...hold(90, 6, { visibility: 0.2 }), ...hold(175)]) // stepped out at the bottom
   assert.equal(gone.reps, 0)
   const blink = run([...hold(175), ...hold(90), ...hold(90, 2, { visibility: 0.2 }), ...hold(175)]) // brief detection drop is fine
   assert.equal(blink.reps, 1)
-  const front = run([...hold(175), ...hold(90), ...hold(175)].map((f) => { f[12] = { ...f[11], x: f[11].x + 0.3 }; return f }))
+  const front = run([...hold(175), ...[...hold(90), ...hold(175)].map((f) => { f[12] = { ...f[11], x: f[11].x + 0.3 }; return f })])
   assert.equal(front.reps, 0)
   assert.match(front.cue, /side-on/)
 
@@ -80,6 +91,17 @@ test('cheats are not counted', () => {
   assert.equal(run(curl, PROFILES.curl).reps, 1)
   assert.match(run(curl, PROFILES.pushup).cue, /plank/) // standing arm bend ≠ push-up
   assert.match(run(curl, PROFILES.row).cue, /elbows back/)
+})
+
+test('a replayed video never gets past the live check', () => {
+  const video = feed([...hold(175), ...hold(90), ...hold(175), ...hold(90), ...hold(175)]) // reps, but no answer to the cues
+  assert.equal(video.reps, 0)
+  assert.equal(video.phase, 'check')
+  assert.match(feed([...hold(175, 3), ...hold(175, 6).map(raise)]).cue, /before the cue/) // can't know when the cue comes
+  assert.match(feed([...hold(175, 30)]).cue, /Too slow/)
+  const swapped = run([...hold(175), ...hold(90), ...hold(175).map((f) => f.map((l) => ({ ...l, x: l.x + 0.5 })))]) // cut to another picture mid-rep
+  assert.equal(swapped.reps, 0)
+  assert.equal(swapped.phase, 'check')
 })
 
 test('front metrics on a symmetric figure', () => {

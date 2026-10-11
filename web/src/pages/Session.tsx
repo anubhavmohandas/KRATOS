@@ -226,7 +226,7 @@ function RepCounter({ track, onUse, onStop }: { track: string; onUse: (n: number
           <div className="text-[11px] uppercase tracking-wider text-ash">reps</div>
         </div>
         <div className="flex-1 text-sm">
-          <div className={s?.visible === false ? 'text-ember' : 'text-bone'}>{s?.cue ?? 'Waiting for the camera…'}</div>
+          <div aria-live="polite" className={s?.phase === 'check' ? 'text-lg font-semibold text-ember' : s?.visible === false ? 'text-ember' : 'text-bone'}>{s?.cue ?? 'Waiting for the camera…'}</div>
           <div className="mt-1 font-mono text-xs text-ash">{p.label} {s?.angle != null ? `${Math.round(s.angle)}°` : '—'} · counts {p.start === 'high' ? `${p.hi}° → ${p.lo}° → ${p.hi}°` : `${p.lo}° → ${p.hi}° → ${p.lo}°`}</div>
         </div>
         <div className="flex flex-col gap-2">
@@ -234,7 +234,7 @@ function RepCounter({ track, onUse, onStop }: { track: string; onUse: (n: number
           <Button variant="ghost" onClick={() => { counter.current = null; setS(null) }}>Reset</Button>
         </div>
       </div>
-      <p className="text-[11px] text-ash/80">Film side-on, whole body in frame. Only full, controlled reps with the whole body moving count. The count fills the reps box only when you press Use.</p>
+      <p className="text-[11px] text-ash/80">Film side-on, whole body in frame. A quick live check comes first — move your arm on each cue — so a replayed video can’t count; it repeats if you leave the frame. Only full, controlled reps count, and the count fills the reps box only when you press Use.</p>
     </div>
   )
 }
